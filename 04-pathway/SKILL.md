@@ -1,80 +1,104 @@
 ---
 name: bio-pathway-figure-lite
-description: 把机制材料（论文段落/PDF、实验记录、实体表、数据表）画成可逐条核对的生物机制图或信号通路图：实体命名规范（基因斜体/蛋白正体/物种前缀/复合物）、相互作用语义（激活、抑制、结合、修饰、转运、间接/推测各有不同箭头）、区室与跨膜位置、图例与数据编码一致；交付分层可编辑 SVG（每个元素有 id 和来源）+ 真实渲染的 PNG/PDF + 来源映射 + 源文件级修改记录。精简版：标准库脚本，无安装。不用于：统计图表数值计算、艺术插画、论文写作。
+description: 把机制材料（原始论文 PDF、figure 工单 figure-workorder.json、数据表）画成或改成可逐条核对的生物机制图/信号通路图。实体带类型与区室（基因斜体、蛋白正体、复合物、膜蛋白落在膜带上），相互作用语义与证据强度分开编码（间接抑制也能画），节点颜色直接从 CSV 计算并自动生成图例，交付分层可编辑 SVG + JSON 规格 + 真实 PNG/PDF + 像素级自检 + 工单逐条对照 + 源文件级修改记录。精简版：3 个标准库脚本，无安装。不用于：统计计算、艺术插画、论文写作。
 ---
 
 # 生物机制图与通路图（精简版）
 
 ## 路径与预算
-- 输入 `/input/case.json`（+ task.md 与材料，路径以 case.json 为准，先 `ls -R /input`）；工作目录 `/app/work`；交付 `/app/output`；本 Skill 在 `/skills/weekly-skill`（下文 `$S`）。环境变量 `CASE_JSON`/`WORK_DIR`/`OUT_DIR` 若存在一律优先。
-- 预算 64 次请求、900 秒：目标 ≤ 30 次调用。每次渲染命令前加 `timeout 120`。只用 python 改文件，不用 `sed -i`。Python 3.8 兼容（f-string 花括号里不放反斜杠）。
-- 工具：`python3 $S/scripts/svgfig.py`（build 规格→SVG、edit 改源、diff 记改动）；`python3 $S/scripts/export_check.py`（tools 探测、render 出 PNG/PDF、check 自检）。
+- 输入 `/input/case.json`、task.md、材料（常见：`source/*.pdf` 原始论文、`artifacts/figure-workorder.json` 工单、`data/*.csv`）。先 `ls -R /input`，路径以 case.json 为准。工作目录 `/app/work`，交付 `/app/output`，本 Skill 在 `/skills/weekly-skill`（下文 `$S`）。环境变量 `CASE_JSON`/`WORK_DIR`/`OUT_DIR` 若存在一律优先。
+- 预算 64 次请求 / 900 秒，**目标 20–30 次调用**。渲染加 `timeout`。只用 python 改文件，不用 `sed -i`。Python 3.8 兼容。
+- 脚本：`svgfig.py`（spec→SVG + content_map；edit；diff）、`export_check.py`（tools、render、check）、`pixcheck.py`（看渲染像素）。
 
 ## 步骤
-1. **读任务（1–2 次）**：读 case.json 全文和 task.md 的“组织方具体输入修订”。记下 case_id（键 `case_id`/`caseId`/`id`）、图型与画布/格式/分辨率要求、是否有“修改/编辑”请求、output contract 全部字段（键可为 output_contract/outputContract/deliverables/中文；字段可为 snake/camel/中文/properties+required）。
-2. **骨架（第 3 次调用以内）**：写 `/app/output/result.json`：case_id + 每个 contract 字段（先填一句“生成中”）+ `"status":"partial"` + `"status_reasons":["生成中"]`。同时 `timeout 60 python3 $S/scripts/export_check.py tools` 看渲染器和中文字体。
-3. **读全部材料（2–5 次）**：文本/MD/CSV 直接读；PDF 用 `pdftotext -layout f.pdf -`（无则 python fitz/pypdf，再无则记为缺口）；XLSX 用 python zipfile 解 `xl/sharedStrings.xml`+`xl/worksheets/sheet1.xml`。图片读不了就写“未读出”，不猜内容。若材料给了现成 SVG/drawio 要求修改，走第 8 步，不重画。
-4. **实体—关系表 `/app/work/er.md`（1–2 次）**：每行一个实体：`id | 显示名 | 类型(基因/mRNA/蛋白/复合物/家族/小分子/细胞/区室) | 区室 | 来源 文件:行 | 原文短引`；每行一个关系：`id | 上游 | 下游 | 语义 | 方向依据 | 证据强度(直接/间接/推测) | 来源 | 短引`。先过下方“机制图规则”，有歧义写进待确认，不自行补全。
-5. **写规格 `/app/output/figure_spec.json` 并 build（2–4 次）**：`python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg`（spec 就是可编辑源，同时生成 `figure_elements.tsv`）。所有 WARN（缺 src、标签溢出、边穿过节点、无图例、未知 id）都要改到消失或写进 result.json 的 uncertainties。
-6. **渲染（1 次）**：`timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi 300` → figure.png + figure.pdf + export_log.jsonl。失败照实记录（哪个渲染器、报错），不伪造预览。
-7. **来源与图注（1–2 次）**：`figure_source_map.md`（表：元素 id | 图上文字/数值 | 类型 | 来源 文件:位置 | 原文短引 | 人工确认?）以 `figure_elements.tsv` 为底稿；`figure_caption.md`（图注：读图顺序、图例含义、证据强度、只进图注不上图的信息）。
-8. **源文件级编辑**：任务有修改请求就照做；没有就做一次“演示编辑”（如把某节点改成图例已有的另一种强调色），文件另存，change_log 标“演示，不属于正式图”。做法：自己生成的图优先改 spec（另存 `figure_spec_v2.json`）重新 build 到 `figure_v2.svg`（会重新换行、查溢出），单个属性或材料自带的 SVG 用 `svgfig.py edit in.svg out.svg <id> --text "新标签" --set fill=#xxxxxx`（多行标签用 `\n`）；然后 `svgfig.py diff 旧.svg 新.svg` 把 changes 写进 change_log，再 render 新版本。材料自带 SVG 时复制到 output 后用 edit 改，保持其余字节不变。
-9. **填 result.json 并自检（2–3 次）**：按“result.json 规则”填写，运行 `python3 $S/scripts/export_check.py check`，FAIL 改到 PASS；再对照 `$S/resources/checklist.md` 过一遍。
+1. **读任务（1 次）**：一条命令 `cat` case.json、工单 JSON、task.md 末尾“组织方具体输入修订”，并 `sha256sum` 所有材料（记入 versions）。记下：case_id（`case_id`/`caseId`/`id`）、要画/改的是哪张图（如 figure03 / 3E）、必需区室、必需关系类型、反馈/分支、命名规则（物种）、导出格式/宽度 mm/dpi/最小字号、**修改请求**、output_contract 全部字段。
+2. **骨架（第 2 次调用）**：写 `/app/output/result.json`：case_id + 每个 contract 字段填 `"生成中"` + `"status":"partial"` + `"status_reasons":["生成中"]`；同一命令跑 `timeout 60 python3 $S/scripts/export_check.py tools`。（check 会把残留的“生成中”判 FAIL，最后必须替换。）
+3. **读源（1–3 次）**：PDF 用 `pdftotext -layout f.pdf /app/work/src.txt`（无则 python fitz/pypdf；都没有 → exceptions 记“材料无法读取”）；先 `grep -n -i -E "fig(ure)?\.? ?3|<关键词>" src.txt` 定位**图注和对应结果段**，再读这些段落全文。CSV 直接读。图片内容读不了就写“未读出”，不猜。材料自带 SVG 要求修改 → 走第 7 步，不重画。
+4. **决定再画（在写 spec 时完成，不另开文件）**：对每个实体定 `kind`、`comp`、显示名（同义名放 `aliases`）、`src`；对每条关系定 `type`、方向、`evidence`、`src`。逐条过下方“机制规则”。拿不准的进 exceptions，不自行补全。
+5. **spec → build（2–4 次）**：写 `/app/output/figure_spec.json`，`python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg`（同时生成 `figure_content_map.json`）。**WARN 全部改到消失**（缺 src/kind、区室未命名、节点不在所属区室、transport 连了不同实体、两条边重叠、穿节点、穿图例、标签溢出、图例缺项）；确实不能改的写进 exceptions。
+6. **导出 + 看像素（1–2 次）**：`timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi <工单dpi或300>`，同一命令接 `python3 $S/scripts/pixcheck.py /app/output/figure.svg`。pixcheck FAIL（填色没按声明渲染、标签不可见、节点颜色在图例里找不到、边样式无图例）→ 改 spec 重 build 重渲染。渲染器全失败：保留 SVG，记录 export_log，status partial，不伪造 PNG。
+7. **源文件级修改（2–3 次）**：工单/任务有修改请求就照做；没有就做一次“演示编辑”（换一个标签措辞或颜色），change_log 标“演示，不属于正式图”。自己生成的图：复制 spec 为 `figure_spec_v2.json`，改对应节点/边，build 到 `figure_v2.svg`（会重新换行与查错）；材料自带 SVG 或单属性改动：`svgfig.py edit in.svg out.svg <id> --text "新标签" --set fill=#BBBBBB`（edit 若提示标签超宽，改用 spec 重建）。改颜色时在 spec_v2 的 legend.items 加 `{"fill":"#hex","label":"含义"}`（自加项排在最后，旧图例 id 不变），否则 build/pixcheck 会报“颜色无图例”。然后 `svgfig.py diff figure.svg figure_v2.svg > /app/output/edit_diff.json`，render + pixcheck 新版本。修改请求引入材料里没有的内容（如新位点、新数值）：照做，但在 exceptions 记 `user_request_not_in_source`，节点 src 写“工单 edit_request”。
+8. **写 result.json 并自检（2–3 次）**：用下方模板脚本从 content_map / pixel_check / export_log / edit_diff 自动组装（不要手抄表格），补上 compliance_checks 与 exceptions；运行 `python3 $S/scripts/export_check.py check`，FAIL 改到 PASS；对照 `$S/resources/checklist.md` 扫一遍。
 
-## 机制图规则（每条都对照 er.md）
-**命名**
-- 人基因/mRNA 斜体全大写（*TP53*），蛋白正体（p53/TP53）；小鼠基因首字母大写斜体（*Trp53*）。spec 里基因节点设 `"italic": true`。物种不明写待确认。
-- 显示名照抄材料；同义名/旧名只用一个，其余写进图注；家族成员与复合物不混用（复合物用一个圆角框，成员在标签内或并排紧贴）。
-- 不出现材料里没有的基因、蛋白、修饰位点、浓度、时间点、数值。
-**相互作用 → 边类型（svgfig 内置，颜色与端点固定）**
+## 机制规则（读者会逐条核对）
+**实体与命名**
+- `kind`：gene / mrna / protein / complex / family / small_molecule / ion / cell / process。gene、mrna 自动斜体；蛋白、复合物正体。人：基因 *TP53*、蛋白 p53/TP53；小鼠：基因 *Ifnb1*（首字母大写），蛋白 IFN-β / STING（全大写）。物种不明 → exceptions。
+- 同一分子出现在两个区室（如 STING 在 ER 与 Golgi、IRF3 在胞质与核）画两个节点，同一显示名，id 不同。
+- 同义名/旧名（MITA、TMEM173）只上一个显示名，其余写 `aliases`；家族与成员、复合物与亚基不混用（复合物一个节点，标签写全成员如 “IFNAR1/IFNAR2”）。
+- 图上不出现材料里没有的分子、位点、数值、时间点。
+**关系 → `type`（颜色和端点由脚本固定）**
 | 材料措辞 | type | 图形 |
 |---|---|---|
-| 激活、促进、诱导、上调 | activate | 实线 + 实心箭头 |
-| 抑制、阻断、下调、拮抗 | inhibit | 实线 + T 形端 |
-| 结合、相互作用、形成复合物 | bind | 实线 + 圆点端（无方向） |
-| 磷酸化/泛素化/乙酰化等修饰 | modify | 空心箭头 + 标签（+P、+Ub） |
-| 转运、入核、分泌、募集到… | transport | 虚线 + 箭头 |
-| 间接、可能、推测、未验证 | indirect | 点线 + 箭头（灰） |
-- 方向 = 因果方向（上游 from → 下游 to）；“A 被 B 抑制”是 B ⊣ A。只说“相关”时用 `line` 并在图注说明无方向。
-- 一个关系只画一条边；证据只来自间接实验就用 indirect，不升级为 activate。
+| 激活、促进、诱导、上调、转录诱导、表达 | activate | 实线实心箭头 |
+| 抑制、阻断、降解、拮抗 | inhibit | 实线 T 端 |
+| 结合、募集、形成复合物 | bind | 圆点端，无方向 |
+| 磷酸化/泛素化等修饰，效应未说明 | modify | 空心箭头 + 标签 “+P S388” |
+| 修饰且效应已说明（泛素化→降解） | 按效应用 activate/inhibit | 标签写 “+Ub → degradation” |
+| 入核、出核、跨膜转位、分泌 | transport | 虚线箭头，**只连同一实体的两个区室副本** |
+| 只说“相关”、无方向 | line | 无端点 |
+- 方向 = 因果方向；“A 被 B 抑制”画 B ⊣ A。转录因子入核：IRF3(胞质) –transport→ IRF3(核) –activate→ *Ifnb1*；基因到蛋白：*Ifnb1* –activate(“expression”)→ IFN-β，分泌另用 transport 连 IFN-β 的两个副本或在标签说明。
+- **证据强度与 type 正交**：`evidence: direct`（实线，默认）/ `indirect`（点线）/ `hypothesis`（点划线）。“仅过表达观察到、应视为间接”= `type: inhibit, evidence: indirect`；“未检验是否直接”= `evidence: hypothesis`。不把间接画成实线，也不把抑制降成灰箭头。
+- 同一对节点有两种关系（结合 + 磷酸化）：画两条边并给一条 `via` 绕开，否则 build 报重叠。
 **区室与拓扑**
-- 自上而下：胞外 → 膜 → 胞质 → 核（或材料指定的区室）；区室用 `panels`，膜用窄条 panel。跨膜受体节点中心放在膜条上；配体在胞外；转录因子入核用 transport 边跨区室。
-- 主通路自上而下或自左向右单向流动；反馈环用 `via` 绕到侧边；边穿过节点（WARN）必须改。
+- 自上而下：胞外 → 质膜 → 胞质（内含 ER、Golgi、线粒体等子 panel）→ 核膜/核。每个区室和膜都是带 `title` 的 panel；膜用 h 28–40 的窄带，标题自动画在带内左侧（左侧 150 px 不放节点）。
+- 节点写 `comp` = 所在 panel id；跨膜受体的 `comp` 是膜带，中心落在带上；配体在胞外。
+- 主通路单向流动（上→下）；反馈环、并行分支走侧边 `via`，不横穿主链，不穿图例。
 **图例与数据编码**
-- 图里用到的每种边类型、每种填充色都在 legend 里出现一次，文字说明语义；颜色编码数据（表达量、显著性）时 legend 写清分档和单位，数值来自数据表并在 source map 指明行列。
-- 配色用色盲友好色（Okabe–Ito：#0072B2 #E69F00 #009E73 #CC79A7 #56B4E9 #D55E00）；语义靠端点和线型区分，灰度打印仍可读。
+- 图例只需给 `legend:{x,y,title}`：用到的每种 type、每种 evidence、颜色分档会**自动补齐**；自己手写的项若图上没用会报 WARN。
+- 数据上色一律用 `canvas.colorscale`：`{"csv":"/input/data/x.csv","key":"gene","value":"log2FC_6h","breaks":[-1,1,3,5],"colors":["#2166AC","#F7F7F7","#FDDBC7","#D6604D","#B2182B"],"title":"log2FC, 6 h (Table S3)"}`，节点写 `"data":"<key 列的值>"`。脚本读 CSV 取值→分档→填色→图例，并在 content_map 记 值/分档/颜色/文件 sha256。不要手挑数据色。没有数据的分子自动白色，图例出现 “no value in x.csv”。
+- 其他颜色只用于分组时，legend items 里写 `{"fill":"#hex","label":"含义"}`。色盲友好（Okabe–Ito / RdBu），深色填充时标签自动变白。
 
-## spec 示例（坐标为像素；节点 cx/cy 是中心，panel/legend 的 x/y 是左上角）
+## spec 示例（节点 cx/cy 为中心；panel/legend 的 x/y 为左上角）
 ```json
-{"canvas":{"w":1000,"h":680,"title":"<图题，来自材料>"},
- "panels":[{"id":"p-extra","x":20,"y":60,"w":740,"h":120,"title":"Extracellular","src":"materials/a.md:L3"},
-  {"id":"p-mem","x":20,"y":185,"w":740,"h":28,"fill":"#F2D7B6","src":"materials/a.md:L3"},
-  {"id":"p-cyto","x":20,"y":218,"w":740,"h":260,"title":"Cytoplasm","src":"materials/a.md:L4"}],
- "nodes":[{"id":"n-lig","label":"<配体>","cx":380,"cy":125,"shape":"circle","w":80,"h":60,"src":"materials/a.md:L5"},
-  {"id":"n-rec","label":"<受体>","cx":380,"cy":199,"w":120,"h":48,"shape":"round","src":"materials/a.md:L5"},
-  {"id":"n-gene","label":"<基因>","cx":380,"cy":420,"italic":true,"src":"materials/a.md:L9"}],
- "edges":[{"id":"e-bind","from":"n-lig","to":"n-rec","type":"bind","src":"materials/a.md:L5"},
-  {"id":"e-act","from":"n-rec","to":"n-gene","type":"activate","label":"<条件>","src":"materials/a.md:L7"}],
- "texts":[{"id":"t-note","text":"<短注>","x":30,"y":665,"fs":11,"src":"materials/a.md:L10"}],
- "legend":{"x":780,"y":70,"title":"Legend","items":[{"edge":"bind","label":"binding"},{"edge":"activate","label":"activation"}]}}
+{"canvas":{"w":1100,"h":820,"width_mm":180,"title":"<图题，来自材料>","src":"src.txt:L<图注行>",
+  "colorscale":{"csv":"/input/data/de.csv","key":"gene","value":"log2FC","breaks":[-1,1,3],"colors":["#2166AC","#F7F7F7","#F4A582","#B2182B"],"title":"log2FC (Table S1)"}},
+ "panels":[{"id":"p-ex","x":20,"y":50,"w":820,"h":90,"title":"Extracellular","src":"src.txt:L12"},
+  {"id":"p-pm","x":20,"y":145,"w":820,"h":32,"title":"Plasma membrane","src":"src.txt:L12"},
+  {"id":"p-cy","x":20,"y":182,"w":820,"h":400,"title":"Cytosol","src":"src.txt:L5"},
+  {"id":"p-nu","x":20,"y":590,"w":820,"h":200,"title":"Nucleus","fill":"#EAF2FA","src":"src.txt:L9"}],
+ "nodes":[{"id":"n-lig","label":"<配体>","kind":"protein","comp":"p-ex","cx":420,"cy":95,"w":90,"h":36,"shape":"circle","src":"src.txt:L12"},
+  {"id":"n-rec","label":"<受体1/受体2>","kind":"complex","comp":"p-pm","cx":420,"cy":161,"w":150,"h":40,"shape":"round","src":"src.txt:L12"},
+  {"id":"n-tf-c","label":"<TF>","kind":"protein","comp":"p-cy","cx":420,"cy":480,"w":100,"h":40,"data":"<Tf>","src":"src.txt:L8"},
+  {"id":"n-tf-n","label":"<TF>","kind":"protein","comp":"p-nu","cx":420,"cy":650,"w":100,"h":40,"src":"src.txt:L8"},
+  {"id":"n-gene","label":"<Gene1>","kind":"gene","comp":"p-nu","cx":600,"cy":730,"w":100,"h":40,"data":"<Gene1>","src":"src.txt:L9"}],
+ "edges":[{"id":"e-bind","from":"n-lig","to":"n-rec","type":"bind","src":"src.txt:L12"},
+  {"id":"e-imp","from":"n-tf-c","to":"n-tf-n","type":"transport","label":"nuclear import","src":"src.txt:L8"},
+  {"id":"e-tx","from":"n-tf-n","to":"n-gene","type":"activate","label":"transcription","src":"src.txt:L9"},
+  {"id":"e-fb","from":"n-gene","to":"n-rec","type":"inhibit","evidence":"indirect","via":[[870,730],[870,161]],"src":"src.txt:L10"}],
+ "legend":{"x":880,"y":60,"title":"Legend"}}
 ```
-其他键：节点 `shape` rect|round|band|ellipse|circle|diamond、`fill`、`fs`、`bold`；边 `via:[[x,y],…]`、`elbow:"hv"|"vh"`、`both:true`、`width`；网格布局 `canvas.grid{x0,y0,dx,dy}` + 节点 `col,row`。中文标签可直接写（字体栈已含 CJK）。标签里不写 id、文件名、行号。
+其他键：`shape` rect|round|band|ellipse|circle|diamond、`fill`、`fs`、`bold`、`aliases`、`xref`（只写材料给出的 ID）；边 `via`、`elbow:"hv"|"vh"`、`both`、`width`；`texts[{id,text,x,y,fs,w,src}]`。图上不写 id、文件名、行号。
 
-## result.json 规则
-- 必有：`case_id`、每个 contract 字段、`status`、`status_reasons`、`artifacts`（路径相对 /app/output，含 role：source/preview/export/record）、`entities`（er.md 实体表内嵌）、`relations`（关系表内嵌）、`source_map`（内嵌表 + `figure_source_map.md`）、`data_mapping`（颜色/线宽/大小 ↔ 数据 ↔ 来源；没有数据编码写一句说明）、`export_checks`（格式、画布 px、dpi、PNG 尺寸、PDF 是否矢量、字体是否嵌入、中文字体、最小字号、色盲/灰度、渲染器）、`change_log`（版本、改了哪些 id、前→后、原因）、`versions`（skill 版本 lite-1.0、材料文件名、渲染器）、`uncertainties`、`material_gaps`、`needs_human_confirmation`。
-- 字段映射按含义：要“源文件/路径”的填 `figure.svg`（或路径列表 + spec）；要“导出件”的填 png/pdf 路径加 export_checks；要“来源/修改记录”的填 source_map + change_log 内嵌表并附文件路径。看不懂的字段按说明填最接近的内容并在 `run_notes` 说明。
-- 任何字段不得留空、TODO、“生成中”。**status 只写一个词**：contract 列了可选词就用它的；否则 complete / partial / failed。complete = 图、预览、来源映射齐全且无未决歧义；有缺口或待确认 = partial（原因逐条写进 status_reasons）；没有出图 = failed。
+## result.json 组装模板（第 8 步，按需改值后运行）
+```python
+import json,glob,os; O=os.environ.get("OUT_DIR","/app/output"); L=lambda p:json.load(open(os.path.join(O,p),encoding="utf-8"))
+r=L("result.json"); cm=L("figure_content_map.json"); px=L("figure_pixel_check.json")
+ex=[json.loads(l) for l in open(os.path.join(O,"export_log.jsonl"),encoding="utf-8")]
+r.update(status="partial", status_reasons=["<逐条：未决歧义/缺口；全部解决才写 complete 并留空列表说明>"],
+ editable_source={"svg":"figure.svg","spec":"figure_spec.json","layers":["panels","edges","nodes","data","text","legend"],"edited":["figure_v2.svg","figure_spec_v2.json"],"how_to_edit":"改 spec 后 svgfig.py build，或 svgfig.py edit 按 id 改"},
+ export_artifact=[{k:e.get(k) for k in ("png","pdf","png_method","pdf_is_vector","pdf_fonts","canvas_px","dpi")} for e in ex],
+ content_map=dict(cm,file="figure_content_map.json"),
+ compliance_checks=[{"requirement":"<工单/任务原文一项>","result":"pass|partial|fail","element_ids":["<SVG 中的 id>"],"evidence":"<怎么满足>"},
+   {"requirement":"pixel inspection","result":"pass" if not px["fails"] else "fail","element_ids":[],"evidence":"figure_pixel_check.json"}],
+ exceptions=[{"category":"material_missing|undecidable|contradiction|run_failure|user_request_not_in_source","detail":"…","handling":"…"}],
+ change_log=[dict(c,version="v2",reason="<修改请求原文>") for c in L("edit_diff.json")["changes"]],
+ versions={"skill":"bio-pathway-figure-lite 1.1","materials_sha256":{"<文件>":"<sha>"},"renderer":ex[-1].get("png_method")},
+ artifacts=[{"path":p,"role":"source" if p.endswith((".svg",".json")) else "export"} for p in sorted(os.listdir(O)) if p!="result.json"])
+json.dump(r,open(os.path.join(O,"result.json"),"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+```
+- contract 字段名不同就按含义映射：源文件/路径 → editable_source；导出件 → export_artifact；来源/元素/映射 → content_map；检查/合规 → compliance_checks；异常/不确定/缺口 → exceptions。看不懂的字段填最接近内容并在 `run_notes` 说明。
+- compliance_checks 必须覆盖工单每一项（区室、必需关系类型、反馈/分支、命名、格式/宽度/dpi/最小字号、修改请求），`element_ids` 必须是 SVG 里真实存在的 id（check 会核对）。最小字号换算：pt = px × (width_mm×3.78/W) × 0.75。
+- **status 只写一个词**：contract 给了词表就用它的；否则 complete / partial / failed。exceptions 里有未决项 → partial；没出图 → failed。“材料缺失、无法判断、运行失败”分别用不同 category 写。
 
 ## 异常处理
 | 情况 | 处置 |
 |---|---|
-| 关系方向/作用类型材料没写清 | 用 indirect 或 line，图注说明，列入 needs_human_confirmation |
-| 同名基因与蛋白、物种不明 | 按材料原写法，列待确认，不擅自改大小写 |
-| 数据与文字矛盾 | 两处都记进 uncertainties，图按数据表画并注明 |
-| 节点过多不可读（> 25） | 合并非核心分支到一个“其他”节点并在图注列出，或拆子图 a/b |
-| 标签溢出/边穿节点 | 调 w/h、坐标或 via，直到 build 无 WARN |
-| 无渲染器/渲染失败 | 保留 SVG，记录 export_log，status partial，不伪造 PNG |
-| 无中文字体 | 改用英文标签或记录 tofu 风险 |
+| 方向/作用类型没写清 | `line` 或 `evidence: hypothesis`，exceptions: undecidable |
+| 同名基因与蛋白、物种不明 | 按材料写法，`kind` 按语境定，exceptions 记依据 |
+| 正文/摘要与数据表矛盾 | 颜色按数据表（colorscale），两处原文都写进 exceptions: contradiction |
+| 修改请求引入材料没有的内容 | 照做、src 标工单，exceptions: user_request_not_in_source |
+| 节点 > 25 不可读 | 非核心分支合并为一个节点并在 aliases/图注列出，或拆 a/b 两个 panel |
+| 渲染器或中文字体缺失 | 保留 SVG + export_log，改英文标签或记 tofu 风险，status partial |
 
 ## 不做的事
-不编造实体、关系、数值或来源；不把推测画成实线；不只交位图；不在图上留内部 id、文件名、TODO；不伪造渲染结果或人工确认。
+不编造实体、关系、位点、数值或来源；不把间接画成实线；不手挑数据颜色；不只交位图；图上不留 id/文件名/TODO；不伪造渲染、像素检查或人工确认。

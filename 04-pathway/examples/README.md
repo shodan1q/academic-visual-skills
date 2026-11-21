@@ -1,54 +1,81 @@
 # 最小调用示例（示例 / synthetic，不是正式案例结果）
 
-下面的材料、数值和输出全部为说明接口而虚构。
+以下材料、数值与输出全部为说明接口而虚构（一段合成的小鼠 cGAS–STING 机制描述）。
 
 ## 1. 示例输入
-case 文件（示例）：
+case（示例）：
 ```json
-{"caseId": "example-04",
- "task": "示例：依据 materials/mechanism.md 画三区室信号通路机制图，用颜色标出 de.csv 的 log2FC；随后把 β-catenin 节点标签改为 β-catenin (CTNNB1)。",
- "materials": ["materials/mechanism.md", "materials/de.csv"],
- "outputContract": {"editableSource": "分层 SVG 源文件路径", "exports": "PNG/PDF 导出件与检查",
-                    "provenance": "元素来源与修改记录（表）", "status": "completed / partial / failed"}}
+{"case_id": "SIM04-PATHWAY-01",
+ "materials": ["source/paper.pdf", "data/tableS3_log2fc.csv", "artifacts/figure-workorder.json"],
+ "output_contract": ["case_id", "status", "editable_source", "export_artifact", "content_map", "compliance_checks", "exceptions"]}
 ```
-`materials/mechanism.md`（示例，节选）：
-```
-2  Ligand WNT3A binds the receptor FZD7 at the plasma membrane together with co-receptor LRP6.
-3  Receptor activation recruits DVL2 to the membrane, and DVL2 inhibits the destruction complex (AXIN1/APC/GSK3B).
-7  AXIN2 protein is reported to feed back on the destruction complex; whether this is direct was not tested.
-```
-`materials/de.csv`（示例）：`gene,log2FC,padj` / `AXIN2,2.4,0.001` / `MYC,1.1,0.03`
-
-## 2. 实体—关系表（示例，节选）
-| id | 上游 | 下游 | 语义 | 证据 | 来源 |
-|---|---|---|---|---|---|
-| e-bind1 | WNT3A | FZD7 | bind | 直接 | mechanism.md:L2 |
-| e-inh | DVL2 | 破坏复合体 | inhibit | 直接 | mechanism.md:L3 |
-| e-fb | AXIN2 | 破坏复合体 | indirect（材料说未检验） | 推测 | mechanism.md:L7 |
-
-## 3. 规格片段（示例）
+工单（示例，节选）：
 ```json
-{"nodes": [{"id": "n-dvl2", "label": "DVL2", "cx": 330, "cy": 280, "src": "mechanism.md:L3"},
-           {"id": "n-axin2", "label": "AXIN2", "cx": 520, "cy": 700, "italic": true, "fill": "#D55E00", "src": "mechanism.md:L6; de.csv:row2"}],
- "edges": [{"id": "e-fb", "from": "n-axin2", "to": "n-dc", "type": "indirect", "label": "feedback (direct? untested)",
-            "via": [[120, 700], [120, 390]], "src": "mechanism.md:L7"}]}
+{"figure_id": "figure03", "panel": "3E",
+ "required_compartments": ["extracellular", "plasma membrane", "cytosol", "ER membrane", "Golgi", "nucleus"],
+ "must_show": ["binding vs activation vs inhibition vs phosphorylation vs translocation vs ubiquitination distinguishable",
+               "negative feedback loop", "parallel NF-kB branch", "evidence strength for indirect links"],
+ "export": {"formats": ["svg", "pdf", "png"], "width_mm": 180, "png_dpi": 600, "min_font_pt": 6},
+ "edit_request": "change the label of TBK1 to 'TBK1 (p-S172)' and the IFNAR colour to grey #BBBBBB, re-export, record the diff"}
+```
+paper.pdf 文本（示例，节选，行号来自 `pdftotext -layout`）：
+```
+14 3.4 TBK1 phosphorylated STING at Ser365 and phosphorylated IRF3 at Ser388.
+15 Phosphorylated IRF3 dimerized and translocated to the nucleus.
+16 3.5 In the nucleus, IRF3 induced transcription of Ifnb1 and Cxcl10. ...
+19 3.6 STAT1 induced expression of the E3 ligase Trim30a. TRIM30a protein promoted
+20 ubiquitination and degradation of STING, providing negative feedback (Figure 3E).
+23 3.8 The phosphatase PPM1A inhibited TBK1 activity; the effect was observed only
+24 with overexpression and should be considered indirect.
+30 Note: In the abstract we state that Irf3 mRNA is strongly upregulated; Table S3 shows otherwise.
+```
+tableS3_log2fc.csv（示例，节选）：`gene,protein,log2FC_6h,padj` / `Ifnb1,IFN-beta,6.9,1e-12` / `Irf3,IRF3,-0.3,0.48` / `Trim30a,TRIM30a,3.1,4e-6`
+
+## 2. spec 片段（示例）
+```json
+{"canvas": {"w": 1150, "h": 880, "width_mm": 180,
+  "colorscale": {"csv": "/input/data/tableS3_log2fc.csv", "key": "gene", "value": "log2FC_6h", "breaks": [-1, 1, 3, 5],
+                 "colors": ["#2166AC", "#E0E0E0", "#FDDBC7", "#EF8A62", "#B2182B"], "title": "log2FC, 6 h (Table S3)"}},
+ "nodes": [
+  {"id": "n-irf3-c", "label": "IRF3", "kind": "protein", "comp": "p-cy", "data": "Irf3", "cx": 730, "cy": 520, "src": "src.txt:L14-15"},
+  {"id": "n-irf3-n", "label": "IRF3", "kind": "protein", "comp": "p-nu", "data": "Irf3", "cx": 730, "cy": 700, "src": "src.txt:L15-16"},
+  {"id": "n-ifnb1", "label": "Ifnb1", "kind": "gene", "comp": "p-nu", "data": "Ifnb1", "cx": 560, "cy": 790, "src": "src.txt:L16"}],
+ "edges": [
+  {"id": "e-imp", "from": "n-irf3-c", "to": "n-irf3-n", "type": "transport", "label": "dimer → nucleus", "src": "src.txt:L15"},
+  {"id": "e-tx1", "from": "n-irf3-n", "to": "n-ifnb1", "type": "activate", "label": "transcription", "src": "src.txt:L16"},
+  {"id": "e-ppm", "from": "n-ppm1a", "to": "n-tbk1", "type": "inhibit", "evidence": "indirect", "src": "src.txt:L23-24"}],
+ "legend": {"x": 880, "y": 60, "title": "Legend"}}
 ```
 
-## 4. 命令
+## 3. 命令与输出（示例，本机 rsvg-convert）
 ```bash
-python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec.json $OUT_DIR/figure.svg      # -> no warnings, 24 elements
-timeout 300 python3 $S/scripts/export_check.py render $OUT_DIR/figure.svg --dpi 300   # -> rsvg-convert, PDF fonts embedded
-python3 $S/scripts/svgfig.py edit $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg n-bcat-label --text "β-catenin (CTNNB1)"
-python3 $S/scripts/svgfig.py diff $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg          # -> 1 change, 78 ids kept
-python3 $S/scripts/export_check.py check                                              # -> PASS
+python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec.json $OUT_DIR/figure.svg
+#  -> no warnings; 18 entities, 19 relations, 13 legend items (auto)
+timeout 300 python3 $S/scripts/export_check.py render $OUT_DIR/figure.svg --dpi 600
+#  -> PNG 4252 x 3254 px (180 mm @ 600 dpi); PDF vector, 16 fonts embedded
+python3 $S/scripts/pixcheck.py $OUT_DIR/figure.svg
+#  -> PASS: 18 nodes inspected (re-render 1201 px), fills as declared, labels visible, every colour in legend
+python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec_v2.json $OUT_DIR/figure_v2.svg
+python3 $S/scripts/svgfig.py diff $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg > $OUT_DIR/edit_diff.json
+#  -> 132 ids kept; changes: n-tbk1-label text "TBK1" -> "TBK1 / (p-S172)", n-ifnar fill #FFFFFF -> #BBBBBB, legend-fill-bbbbbb added
+python3 $S/scripts/export_check.py check
+#  -> PASS: 7 contract field(s), status=partial, 0 fail / 0 warn
 ```
+第一次 build v2 时只改了颜色、没加图例项，pixcheck 报 `node n-ifnar colour #BABABA has no legend swatch`；在 spec_v2 的 legend.items 加 `{"fill":"#BBBBBB","label":"recoloured on request (no data)"}` 后通过。
 
-## 5. 示意输出（示例）
-- `figure.svg` 分层：layer-panels（胞外/膜/胞质/核）、layer-edges（10 条语义边）、layer-nodes、layer-text、layer-legend；每个元素带 `data-src`。
-- `result.json`（节选）：
+## 4. result.json 节选（示例）
 ```json
-{"case_id": "example-04", "status": "completed",
- "provenance": {"source_map_file": "figure_source_map.md",
-                "change_log": [{"id": "n-bcat-label", "change": "text", "before": "β-catenin", "after": "β-catenin (CTNNB1)"}]},
- "uncertainties": ["AXIN2 反馈是否直接未检验，画为 indirect"]}
+{"case_id": "SIM04-PATHWAY-01", "status": "partial",
+ "status_reasons": ["Abstract vs Table S3 contradiction on Irf3 left for author confirmation",
+                    "edit request adds p-S172, which the source does not mention"],
+ "editable_source": {"svg": "figure.svg", "spec": "figure_spec.json", "edited": ["figure_v2.svg", "figure_spec_v2.json"]},
+ "content_map": {"file": "figure_content_map.json",
+   "relations": [{"id": "e-ppm", "from": "PPM1A", "to": "TBK1", "type": "inhibit", "evidence": "indirect", "src": "src.txt:L23-24"}],
+   "data_encoding": {"file": "/input/data/tableS3_log2fc.csv", "sha256_16": "ab7d289f2138333a",
+                     "nodes": [{"node": "n-irf3-c", "key": "Irf3", "value": -0.3, "bin": "-1 to < 1", "color": "#E0E0E0"}]}},
+ "compliance_checks": [{"requirement": "negative feedback loop", "result": "pass",
+                        "element_ids": ["e-trimg", "e-trimp", "e-fb"], "evidence": "STAT1 → Trim30a → TRIM30a ⊣ STING"}],
+ "exceptions": [{"category": "contradiction", "detail": "abstract: Irf3 strongly up; Table S3: log2FC -0.3",
+                 "handling": "coloured by Table S3"},
+                {"category": "user_request_not_in_source", "detail": "label 'TBK1 (p-S172)'", "handling": "applied in v2, src marks the workorder"}]}
 ```

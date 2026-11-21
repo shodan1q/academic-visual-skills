@@ -1,26 +1,27 @@
 # 交付前自检清单（机制图 / 通路图）
 
-运行 `python3 $S/scripts/export_check.py check` 得到 PASS 后，再逐条人工核对（在 result.json 的 export_checks 或 run_notes 里写结论）：
+脚本能查的先让脚本查：`svgfig.py build` 无 WARN → `pixcheck.py` PASS → `export_check.py check` PASS。下面是脚本查不到、要对着原文人工过一遍的项（结论写进 compliance_checks 或 exceptions）。
 
-## 科学内容
-- [ ] er.md 每个实体都在图上，图上每个节点都在 er.md 里（不多不少）；节点 `src` 指向文件:行。
-- [ ] 基因斜体、蛋白正体；物种大小写规则一致；复合物与成员、家族与成员没有混画。
-- [ ] 每条边的 type 与材料措辞一致（激活/抑制/结合/修饰/转运/间接）；方向是“上游 → 下游”；“被 X 抑制”画成 X ⊣ 目标。
-- [ ] 推测、未检验、间接的关系用 indirect（点线），没有被画成实线。
-- [ ] 区室顺序与材料一致；跨膜蛋白在膜条上；入核/分泌等跨区室过程用 transport。
-- [ ] 图上所有数值（log2FC、倍数、p 值、浓度、时间）都能在数据文件找到行列，单位正确。
+## 实体（对照原文和 figure_content_map.json 的 entities）
+- [ ] 图上每个节点都能在原文/数据表找到；原文图注和结果段里点名的分子没有漏画（漏了就写 exceptions）。
+- [ ] `kind` 判对：基因 vs mRNA vs 蛋白 vs 复合物 vs 家族；同一个符号在材料里既指基因又指蛋白时，按句子语境分别建节点。
+- [ ] 物种写法一致（人 *TP53*/p53；小鼠 *Trp53*/p53）；同义名、旧名只进 `aliases`。
+- [ ] 同一分子在两个区室各有一个节点，`comp` 正确；跨膜蛋白在膜带上。
 
-## 图例与编码
-- [ ] 用到的每种边类型、每种填充色都在图例中；图例没有图上不存在的项。
-- [ ] 颜色编码数据时，图例写清分档/数值和单位；色盲友好；灰度下靠线型/端点仍可区分。
+## 关系（对照 relations）
+- [ ] 方向是因果方向；“A 被 B 抑制”画成 B ⊣ A。
+- [ ] 措辞到 type 的映射符合 SKILL.md 表格；修饰位点只写原文给出的。
+- [ ] “仅过表达”“未检验是否直接”“可能”都带了 `evidence: indirect/hypothesis`，没有画成实线。
+- [ ] transport 只连同一实体的两个副本；转录诱导用 activate 指向基因。
+- [ ] 反馈环、并行分支都在，并且画在侧边、不横穿主链。
 
-## 版式与导出
-- [ ] build 无 WARN（无缺 src、溢出、穿节点、无图例）。
-- [ ] figure.png（300 dpi）与 figure.pdf（矢量、字体嵌入）存在且来自 render；export_log.jsonl 有记录。
-- [ ] 最小字号 ≥ 9 px（画布宽 1000–1400 px 时）；中文标签有 CJK 字体。
-- [ ] 图上无内部 id、文件名、行号、TODO、占位文字。
+## 图例与数据
+- [ ] 颜色来自 `canvas.colorscale`（CSV 实读），没有手挑的数据色；分档和单位写在图例标题。
+- [ ] 正文与数据表矛盾时按数据表上色，矛盾写进 exceptions: contradiction。
+- [ ] 灰度打印下靠线型/端点仍能区分关系类型。
 
-## 可编辑性与记录
-- [ ] figure_spec.json 与 figure.svg 都在 /app/output；SVG 分层（layer-panels / edges / nodes / data / text / legend），文字是 `<text>`。
-- [ ] 修改请求（或演示编辑）是在源文件上完成的：diff 只显示预期改动，kept_ids 接近全部；新版本也已渲染。
-- [ ] result.json：case_id、所有 contract 字段、status 一个词、status_reasons、uncertainties、material_gaps、needs_human_confirmation 都已填写。
+## 导出与修改
+- [ ] 格式、宽度 mm、dpi 与工单一致；最小字号换算成 pt 后 ≥ 工单要求。
+- [ ] 修改在源上完成（spec_v2 重建或 edit），`edit_diff.json` 只含预期改动，旧 id 基本全部保留；新版本已渲染并通过 pixcheck。
+- [ ] 修改请求引入了材料没有的内容时，exceptions 有 `user_request_not_in_source`。
+- [ ] result.json：7 个 contract 字段齐全，status 一个词，status_reasons 与 exceptions 一致，没有 `<…>` 模板残留。
