@@ -3,32 +3,32 @@
 每项写进 compliance_checks：`{"check": ..., "result": "PASS|FAIL|WARN|未核对", "basis": "实测依据"}`。
 
 ## A. 模板真实套用
-- [ ] checker `--template` PASS：母版/版式/主题部件与目标模板逐字节一致
-- [ ] 所有页的版式都来自目标模板（checker 无 "layouts that are not in the template"）
-- [ ] inspect 输出里每页标题是 `ph:title`/`ph:ctrTitle`，正文是 `ph:obj`/`ph:body`；散装 `text` 只用于图注
-- [ ] run 上没有写字体名/颜色（字体颜色靠主题继承）；工作单规定的例外已记录
-- [ ] 模板样例页已删除；无 "单击此处添加" 等提示文字
+- [ ] checker `--template` PASS：母版/版式/主题部件与目标模板逐字节一致；所有页的版式都来自目标模板
+- [ ] build 的 `placed` 行：标题在 title/ctrTitle，正文在面积最大的 body/obj，出处在 Source/Note 占位符，图注在图片版式的图注占位符
+- [ ] slide_audit.md 的 loose text boxes 列基本为空（图注/出处文本框除外）
+- [ ] run 上没有写字体名/颜色；模板样例页已删除；无 "Click to add / 单击此处" 等提示文字
 
-## B. 版式约束与字号
-- [ ] template_spec.md 记录了母版标题/正文字号；没有任何正文低于母版正文 80%（或工作单下限）
-- [ ] build 无溢出 WARN；有的话写了处理方式（删冗余 / 拆页 / 换版式）
-- [ ] 长标题不超过 2 行；多图并列用 Two Content/Comparison 或显式 box，图不重叠
+## B. 事实与编号（论文优先）
+- [ ] corrections.md 列出旧 deck 与论文不一致处及处理；change_log 有对应记录
+- [ ] checker `--paper` 无 "come from the old deck but NOT from the paper"、无 "reads like paper Fig. N"
+- [ ] 图表编号沿用论文编号与写法，整册统一；他人工作的数写 "[n] 报道"
 
-## C. 图表适配
-- [ ] 图片等比缩放（kit 默认），没有拉伸；分辨率不足的图列为 exception
-- [ ] 表格是原生表格，数值与原 deck/论文逐格一致（checker 数字回查）
-- [ ] 图表编号与引用编号与来源一致，整册写法统一
+## C. 版式约束与字号
+- [ ] template_spec.md 写了字号阶梯；正文 ≥ 工作单下限（默认 18 pt），checker `--min-pt` 无 FAIL
+- [ ] build.log 的 WARN 已处理（删字 / 拆页 / 换版式）或逐条写进 uncertainty/exceptions
+- [ ] 长标题 ≤ 2 行；多图并列用双栏版式或显式 box
 
-## D. 批量一致性
-- [ ] 页数 = 原 deck / 工作单页数（checker `--slides N`）；layout_map 覆盖每一页
-- [ ] 每页有页脚和页码，页码连续（inspect 里 `ph:sldNum` 数 = 页数）
-- [ ] 备注全部迁移（inspect 里每页 `[notes]` 非空，或原页本无备注已注明）
+## D. 图表
+- [ ] slide_audit.md 图片比例误差 ≤ 3%；分辨率不足的图列为 exception
+- [ ] 表格是原生表格，数值逐格照论文
 
-## E. 导出
-- [ ] presentation.pdf 页数 = 幻灯片数；preview PNG 存在
-- [ ] pdffonts 实测字体与替代情况写入 export_artifact
-- [ ] 渲染后文字无丢失（checker 无 "missing from the rendered PDF page"）
+## E. 批量一致性与讲述
+- [ ] 页数 = 工作单页数（`--slides N`）；plan.md 覆盖旧 deck 每一页的去向
+- [ ] 每页有页脚和页码（审计表 placeholders 列含 ftr、sldNum）
+- [ ] 每页有备注（审计表 notes chars > 0），备注不复读页面
+- [ ] 页序 问题→方法→证据→结论→局限；结果页标题是结论句
 
-## F. 结果文件
+## F. 导出与结果文件
+- [ ] presentation.pdf 页数 = 幻灯片数；preview PNG 存在；pdffonts 实测与替代写进 substitutions
 - [ ] contract 字段齐全；status 一个词；exceptions 分"材料缺失 / 无法判断 / 运行失败"
 - [ ] check_result.py PASS
