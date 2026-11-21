@@ -12,12 +12,12 @@
 | 文件 | 作用 |
 |---|---|
 | `SKILL.md` | 读工作单 → 页级计划 → 按指令写 spec（keep/replace/新建）→ 每轮构建与 diff → 导出 → 记录与自检 |
-| `scripts/pptx_kit.py` | 纯标准库：`inspect [--full]`（版式/占位符/主题；每页按角色的文字、表格行、图片、备注，可直接 diff）；`build`（keep 原页、跨 run 替换、新建页、备注、等比图片、三线表、页脚页码、溢出估算、包完整性；新图片不会覆盖保留页的媒体）；`figcrop`（按题注从 PDF 裁原图） |
-| `scripts/check_result.py` | 纯标准库：contract 根字段/status/文件；页数、提示文字、备注、PDF 页数、渲染后文字丢失、数字回查（可同时给论文与初始稿文字）、证据映射覆盖、`--template` 逐字节比对母版/版式/主题 |
+| `scripts/pptx_kit.py` | 纯标准库。`inspect [--full]` 列模板版式/占位符/主题字体颜色/母版字号与已有 deck 每页内容；`build` 在模板上建页：占位符继承、正文进**面积最大**的 body/obj、`source_note` 进来源/注释占位符（没有则页脚上方小字）、图片版式的图注占位符、等比图片、三线表、页脚页码、备注、`keep`/`replace`、溢出与 `min_pt` 字号 WARN、每页打印 `placed` 行；`figcrop` 按题注裁图 |
+| `scripts/check_result.py` | 纯标准库。`--init` 写骨架 result.json；查 contract 字段/status/文件、页数、提示文字、备注、PDF 页数、渲染丢字；`--template` 逐字节比对母版版式主题；`--paper` 查只在旧 deck 出现的数字、图号与论文题注内容不符（`--preserved` 页只报 WARN）；图片拉伸、`--min-pt` 字号、缺页码、散装文本框、build.log 未处理 WARN；写 `slide_audit.md` 逐页偏差记录 |
 | `resources/checklist.md` | 工作单/保留与版本/内容/模板导出/记录逐项核对 |
 | `resources/pptx_xml.md` | 无 python-pptx 时的 zipfile/XML 字符串编辑配方（命名空间安全）与导出核对命令 |
 | `examples/README.md` | 合成最小示例（标注"示例"） |
-| `benchmark/EVALUATION.md` | 设计理由与内部自测记录（无正式评分） |
+| `benchmark/EVALUATION.md` | 设计理由与内部自测记录（内部合成案例） |
 
 ## 依赖
 Python 3.8+ 标准库（必需）；LibreOffice（导出 PDF）、poppler（pdftotext/pdftoppm/pdffonts/pdfinfo）、`diff` 可选并自动探测。不需要 python-pptx。
@@ -33,4 +33,4 @@ Python 3.8+ 标准库（必需）；LibreOffice（导出 PDF）、poppler（pdft
 - 版面检查靠溢出估算与渲染后文字比对，重叠问题需人眼看 PNG。
 
 ## 维护
-版本 1.0（2026-11）。改脚本后按 examples/README.md 回归：build 无 WARN、diff 只含计划内改动、soffice 导出、checker PASS。
+版本 1.1（2026-11）。改脚本后按 examples/README.md 回归：build 无 WARN、diff 只含计划内改动、soffice 导出、checker PASS。

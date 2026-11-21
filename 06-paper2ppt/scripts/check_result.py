@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """check_result.py - validate result.json + the delivered deck (stdlib only, Python 3.8+).
 
-Usage: python3 check_result.py [--case X] [--out OUT_DIR/result.json] [--deck D.pptx] [--source paper.txt ...]
-                              [--slides N | --max-slides N] [--template target-template.pptx]
+Usage: python3 check_result.py --init                       # skeleton result.json (every contract field, status partial)
+       python3 check_result.py [--case X] [--out OUT_DIR/result.json] [--deck D.pptx] [--source start_text.txt ...]
+                              [--paper paper.txt] [--preserved 2,5] [--slides N | --max-slides N] [--template target-template.pptx] [--min-pt 18]
 Defaults: $CASE_JSON|/input/case.json, $OUT_DIR|/app/output, deck = newest *.pptx in OUT_DIR, source = $WORK_DIR/*.txt.
 Checks result.json: case_id; every output_contract field (any key style, nested sub-fields) non-empty; no placeholders;
 status is ONE word (contract's own words, else complete|partial|failed); listed files exist.
 Checks the deck: opens; slide count vs --max-slides; template prompt text left ("Click to add", "单击此处"); slides
 without notes; notes that just repeat the slide; PDF preview exists with one page per slide; PNG previews exist;
 every number on a slide appears in the source text (catches typos/rounding/invented values); per-slide evidence map
-covers every slide; with --template: masters/layouts/theme unchanged and every slide on a template layout. Exit 1 on FAIL.
+covers every slide; with --template: masters/layouts/theme unchanged and every slide on a template layout; with --paper:
+numbers that only the old deck has, figure/table labels whose wording matches another caption; picture stretch; explicit
+fonts below --min-pt; missing slide numbers; loose text boxes; unresolved WARN lines in $WORK_DIR/build.log.
+Always writes OUT_DIR/slide_audit.md (per-slide deviation record). Exit 1 on FAIL.
 """
 import argparse, glob, json, os, re, subprocess, sys, zipfile
 from pathlib import Path
@@ -18,7 +22,7 @@ from xml.sax.saxutils import unescape
 CONTRACT_KEYS = ("output_contract", "outputcontract", "outputs_contract", "output_schema", "required_outputs", "deliverables",
                  "expected_outputs", "output_fields", "输出契约", "输出要求", "交付要求")
 SCHEMA_WORDS = ("type", "description", "$schema", "title", "required", "properties")
-PLACEHOLDER = re.compile(r"\bTODO\b|\bTBD\b|\bTBC\b|待补充|待填|PLACEHOLDER|lorem ipsum|\{\{[^{}]{0,40}\}\}|xxx+", re.I)
+PLACEHOLDER = re.compile(r"not yet produced|\bTODO\b|\bTBD\b|\bTBC\b|待补充|待填|<placeholder>|lorem ipsum|\{\{[^{}]{0,40}\}\}|xxx+", re.I)
 PROMPT = re.compile(r"Click to (add|edit)|单击此处|点击此处|点击添加|单击以|Lorem|\bTODO\b|待补充|标题文字|在此输入", re.I)
 STATUS, ALIASES = ("complete", "partial", "failed"), {"completed": "complete", "success": "complete", "done": "complete", "fail": "failed"}
 NUM = re.compile(r"(?<![\w.])[-−]?\d+(?:[.,]\d+)*(?:\.\d+)?")
@@ -133,6 +137,7 @@ def check_deck(deck, res, sources, max_slides, fails, warns, exact=None):
             warns.append("slide %d has no speaker notes" % i)
         elif len(nt) > 20 and sum(1 for c in nt if c in t) / float(len(nt)) > 0.8 and nt.replace(" ", "")[:40] in t.replace(" ", ""):
             warns.append("slide %d notes mostly repeat the slide text; notes should add transitions/emphasis/backup evidence" % i)
+    lost_by = {}
     stem = os.path.splitext(deck)[0]
     pdfs = [p for p in glob.glob(os.path.join(os.path.dirname(deck), "*.pdf"))]
     pdf = stem + ".pdf" if os.path.exists(stem + ".pdf") else (pdfs[0] if pdfs else None)
@@ -149,6 +154,7 @@ def check_deck(deck, res, sources, max_slides, fails, warns, exact=None):
                 break
             toks = [w for w in re.findall(r"[A-Za-z]{3,}|[\u4e00-\u9fff]", t)]
             lost = [w for w in toks if w not in pt]
+            lost_by[i] = len(lost)
             if toks and pt and len(lost) > max(2, 0.1 * len(toks)):
                 warns.append("slide %d: %d/%d words missing from the rendered PDF page (clipped/overflow?): %s" % (i, len(lost), len(toks), "".join(lost[:15])[:60]))
     if not glob.glob(os.path.join(os.path.dirname(deck), "**", "*.png"), recursive=True):
@@ -173,6 +179,120 @@ def check_deck(deck, res, sources, max_slides, fails, warns, exact=None):
             print("numbers: every number on the slides occurs in the source text")
     else:
         warns.append("no source text given (--source paper.txt) -> number provenance not checked")
+    return sl, lost_by
+
+
+def paper_check(sl, paper, deck_srcs, fails, warns, preserved=()):
+    """Slides vs the PAPER (not the old deck): numbers that only the old deck has, and figure/table labels whose text
+    matches a different caption in the paper (the classic 'Fig. 3' that is really Fig. 2)."""
+    txt = Path(paper).read_text(encoding="utf-8", errors="ignore")
+    pool = {norm(x) for x in NUM.findall(txt)}
+    deck_pool = set()
+    for s in deck_srcs:
+        try:
+            deck_pool |= {norm(x) for x in NUM.findall(Path(s).read_text(encoding="utf-8", errors="ignore"))}
+        except Exception:
+            pass
+    only_deck, unknown = [], []
+    for i, (t, _) in enumerate(sl, 1):
+        for x in NUM.findall(t):
+            v = norm(x)
+            if v in pool or (v.isdigit() and int(v) < 10):
+                continue
+            (only_deck if v in deck_pool else unknown).append("s%d:%s" % (i, x))
+    keep = lambda items: [m for m in items if int(re.match(r"s?(\d+)", m).group(1)) in preserved]
+    if preserved and only_deck:
+        kd = keep(only_deck)
+        if kd:
+            warns.append("preserved slides carry numbers the paper does not have (do not edit them; report in exceptions): %s" % ", ".join(kd[:10]))
+        only_deck = [m for m in only_deck if m not in kd]
+    if only_deck:
+        fails.append("numbers on slides that come from the old deck but NOT from the paper (deck error carried over? check and correct to the paper, log it): %s" % ", ".join(only_deck[:15]))
+    if unknown:
+        warns.append("numbers on slides found in neither paper nor deck (computed? label 'calculated from ...' or remove): %s" % ", ".join(unknown[:15]))
+    LBL = r"(Fig(?:ure)?\.?|Table|Tab\.|图|表)\s*(S?\d+)"
+    kind = lambda k: "T" if k.lower().startswith(("tab", "表")) else "F"
+    caps = {}
+    for line in txt.splitlines():
+        m = re.match(r"\s*" + LBL + r"\s*[.:|：]", line)
+        if m:
+            caps.setdefault((kind(m.group(1)), m.group(2)), line.strip())
+    words = lambda u: {w.lower() for w in re.findall(r"[A-Za-z]{4,}|[\u4e00-\u9fff]", u)} - {"figure", "table", "with", "from", "that", "this"}
+    for i, (t, _) in enumerate(sl, 1):
+        for line in t.splitlines():
+            for m in re.finditer(LBL, line):
+                key = (kind(m.group(1)), m.group(2))
+                bucket = warns if i in preserved else fails
+                if caps and key not in caps:
+                    bucket.append("slide %d cites %s but the paper has no caption with that number" % (i, m.group(0)))
+                    continue
+                rest = words(line[m.end():])
+                if len(rest) < 2 or key not in caps:
+                    continue
+                ov = lambda c: len(rest & words(c)) / float(len(rest))
+                best = max(caps, key=lambda k: ov(caps[k]) if k[0] == key[0] else -1)
+                if best != key and ov(caps[best]) >= 0.5 and ov(caps[key]) < 0.25:
+                    bucket.append("slide %d: %r reads like paper %s%s (%r), not %s -> fix the label or the content" % (i, line[:50], "Fig. " if best[0] == "F" else "Table ", best[1], caps[best][:50], m.group(0)))
+    if caps:
+        print("paper: %d figure/table captions indexed; slide labels checked against them" % len(caps))
+
+
+def deck_audit(deck, n, lost_by, min_pt, out_md, fails, warns, preserved=()):
+    """Per-slide deviation record: layout, placeholders used, loose text boxes, picture aspect, smallest explicit font, notes, render loss."""
+    with zipfile.ZipFile(deck) as zf:
+        names = set(zf.namelist())
+        rd = lambda p: zf.read(p).decode("utf-8", "ignore") if p in names else ""
+        rel = lambda part: {i: os.path.normpath(os.path.join(os.path.dirname(part), t)) for i, t in re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', rd(os.path.dirname(part) + "/_rels/" + os.path.basename(part) + ".rels"))}
+        pr = rel("ppt/presentation.xml")
+        rows, has_num = [], any('type="sldNum"' in rd(p) for p in names if p.startswith("ppt/slideLayouts/slideLayout"))
+        for i, rid in enumerate(re.findall(r'<p:sldId [^>]*r:id="([^"]+)"', rd("ppt/presentation.xml")), 1):
+            part = pr[rid]
+            x, rl = rd(part), rel(part)
+            lay = next((p for p in rl.values() if "slideLayout" in p), "")
+            lname = (re.findall(r'<p:cSld name="([^"]*)"', rd(lay)) or [os.path.basename(lay)])[0]
+            phs = ["%s:%s" % ((re.findall(r'type="(\w+)"', a) or ["obj"])[0], (re.findall(r'idx="(\d+)"', a) or ["0"])[0]) for a in re.findall(r"<p:ph\b([^>]*)", x)]
+            loose = [nm for b in re.findall(r"<p:sp>.*?</p:sp>", x, re.S) if "<p:ph" not in b and "<a:t>" in b
+                     for nm in re.findall(r'<p:cNvPr [^>]*name="([^"]*)"', b)[:1] if not re.search(r"caption|source|note|图注|来源", nm, re.I)]
+            small, pics = [], []
+            for b in re.findall(r"<p:sp>.*?</p:sp>", x, re.S):
+                nm = (re.findall(r'<p:cNvPr [^>]*name="([^"]*)"', b) or [""])[0]
+                if re.search(r"caption|source|note|图注|来源", nm, re.I) or re.search(r'type="(sldNum|ftr|dt)"', b):
+                    continue
+                small += [int(v) / 100.0 for v in re.findall(r'<a:rPr[^>]*\bsz="(\d+)"', b)]
+            tsz = [int(v) / 100.0 for g in re.findall(r"<a:tbl>.*?</a:tbl>", x, re.S) for v in re.findall(r'<a:rPr[^>]*\bsz="(\d+)"', g)]
+            for b in re.findall(r"<p:pic>.*?</p:pic>", x, re.S):
+                e, ext = re.search(r'r:embed="([^"]+)"', b), re.search(r'<a:ext cx="(\d+)" cy="(\d+)"', b)
+                data = zf.read(rl[e.group(1)]) if e and rl.get(e.group(1)) in names else b""
+                if not (ext and data[:8] == b"\x89PNG\r\n\x1a\n"):
+                    pics.append("?")
+                    continue
+                iw, ih = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+                c = dict((k, int(v)) for k, v in re.findall(r'\b([ltrb])="(\d+)"', (re.findall(r"<a:srcRect[^>]*/>", b) or [""])[0]))
+                iw, ih = iw * (1 - (c.get("l", 0) + c.get("r", 0)) / 1e5), ih * (1 - (c.get("t", 0) + c.get("b", 0)) / 1e5)
+                dev = abs((int(ext.group(1)) / float(ext.group(2))) / (iw / ih) - 1)
+                pics.append("%.0f%%" % (dev * 100))
+                if dev > 0.03:
+                    bad("slide %d: picture stretched (aspect off by %.0f%%) -> scale proportionally" % (i, dev * 100))
+            bad = (lambda m: warns.append(m + " [preserved slide: not edited, report in exceptions]")) if i in preserved else fails.append
+            mn = min(small) if small else None
+            if min_pt and mn is not None and mn < min_pt:
+                bad("slide %d: body text at %.0fpt below the %.0fpt floor -> shorten/split, do not shrink" % (i, mn, min_pt))
+            if tsz and min(tsz) < 12:
+                warns.append("slide %d: table text %.0fpt (< 12pt is unreadable when projected)" % (i, min(tsz)))
+            if has_num and "sldNum:" not in " ".join(phs):
+                warns.append("slide %d has no slide-number placeholder although the template layouts have one" % i)
+            if len(loose) > 1:
+                warns.append("slide %d: %d loose text boxes %s -> put content in layout placeholders" % (i, len(loose), loose[:3]))
+            nt = rl and next((p for p in rl.values() if "notesSlide" in p), None)
+            nchars = len("".join(re.findall(r"<a:t>([^<]*)</a:t>", rd(nt)))) if nt else 0
+            rows.append("| %d | %s | %s | %s | %s | %s | %d | %s |" % (i, lname, " ".join(phs) or "-", ", ".join(loose) or "-", " ".join(pics) or "-",
+                        ("%.0f" % mn) if mn is not None else "inherit", nchars, lost_by.get(i, "n/a")))
+    if out_md:
+        Path(out_md).write_text("# Slide audit (written by check_result.py)\n\n| slide | layout | placeholders (type:idx) | loose text boxes | picture aspect error | smallest explicit pt (body) | notes chars | words lost in PDF |\n|---|---|---|---|---|---|---|---|\n" + "\n".join(rows) + "\n", encoding="utf-8")
+        print("audit: per-slide record written to %s" % out_md)
+
+
+def evidence_rows(res, n, warns):
     blob = json.dumps(res, ensure_ascii=False)
     pages = {int(x) for x in re.findall(r'"(?:slide|slide_no|slide_number|slide_index|page|页码?|幻灯片)"\s*:\s*"?(\d+)', blob)}
     if not pages:
@@ -191,8 +311,22 @@ def main():
     ap.add_argument("--max-slides", type=int)
     ap.add_argument("--slides", type=int, help="exact required slide count")
     ap.add_argument("--template", help="template .pptx/.potx the deck must inherit from")
+    ap.add_argument("--paper", help="paper text (pdftotext); slide numbers/figure labels are checked against it")
+    ap.add_argument("--preserved", help="comma list of slides that must stay unchanged (paper mismatches there become WARN)")
+    ap.add_argument("--min-pt", type=float, help="smallest allowed explicit body font size")
+    ap.add_argument("--init", action="store_true", help="write a skeleton result.json (status partial) and exit")
     a = ap.parse_args()
-    case, res = load(a.case), load(a.out)
+    case = load(a.case)
+    if a.init:
+        cid = (case.get("case_id") or case.get("caseId") or case.get("id")) if isinstance(case, dict) else None
+        sk = {"case_id": cid}
+        for f in fields(find_contract(case)):
+            sk.setdefault(f, "not yet produced")
+        sk.update({"status": "partial", "status_reasons": ["skeleton written at start; deliverables in progress"]})
+        os.makedirs(os.path.dirname(a.out), exist_ok=True)
+        Path(a.out).write_text(json.dumps(sk, ensure_ascii=False, indent=1), encoding="utf-8")
+        return print("skeleton written: %s (%d fields)" % (a.out, len(sk))) or 0
+    res = load(a.out)
     fails, warns = [], []
     cid = (case.get("case_id") or case.get("caseId") or case.get("id")) if isinstance(case, dict) else None
     if cid is not None and str(res.get("case_id")) != str(cid):
@@ -222,18 +356,31 @@ def main():
         fails.append("status %r is not one of the contract's words %s" % (raw, allowed))
     elif not allowed and st not in STATUS:
         fails.append("status is %r; use complete / partial / failed" % raw)
-    warns += ["no '%s' block (recommended)" % k for k in ("source_map", "change_log", "uncertainty", "material_gaps") if k not in res]
-    for p in sorted(set(re.findall(r'"(/[^"\s]+\.(?:pptx|potx|pdf|png|jpg|md|json|csv|txt|py))"', json.dumps(res, ensure_ascii=False)))):
-        if not Path(p).exists():
-            fails.append("listed file does not exist: %s" % p)
+    warns += ["no '%s' block (recommended)" % k for k in ("source_map", "change_log", "uncertainty", "material_gaps") if '"%s"' % k not in json.dumps(res)]
     decks = [a.deck] if a.deck else sorted(glob.glob(os.path.join(os.path.dirname(a.out), "*.pptx")), key=os.path.getmtime)[-1:]
     if not decks:
         fails.append("no .pptx in %s (pass --deck)" % os.path.dirname(a.out))
     srcs = a.source if a.source is not None else glob.glob(os.path.join(os.environ.get("WORK_DIR", "/app/work"), "*.txt"))
     for d in decks:
-        check_deck(d, res, srcs, a.max_slides, fails, warns, a.slides)
+        r = check_deck(d, res, srcs + ([a.paper] if a.paper else []), a.max_slides, fails, warns, a.slides)
+        if not r:
+            continue
+        sl, lost_by = r
+        evidence_rows(res, len(sl), warns)
+        pres = {int(v) for v in re.findall(r"\d+", a.preserved or "")}
+        if a.paper:
+            paper_check(sl, a.paper, [s for s in srcs if os.path.abspath(s) != os.path.abspath(a.paper)], fails, warns, pres)
         if a.template:
             check_template(d, a.template, fails, warns)
+        deck_audit(d, len(sl), lost_by, a.min_pt, os.path.join(os.path.dirname(a.out), "slide_audit.md"), fails, warns, pres)
+    for p in sorted(set(re.findall(r'"(/[^"\s]+\.(?:pptx|potx|pdf|png|jpg|md|json|csv|txt|py))"', json.dumps(res, ensure_ascii=False)))):
+        if not Path(p).exists():
+            fails.append("listed file does not exist: %s" % p)
+    blog = os.path.join(os.environ.get("WORK_DIR", "/app/work"), "build.log")
+    if os.path.exists(blog):
+        bw = [l.strip() for l in open(blog, encoding="utf-8", errors="ignore") if l.startswith("WARN")]
+        if bw:
+            warns.append("build.log still has %d WARN lines (fix, or list each in exceptions): %s" % (len(bw), bw[0][:90]))
     if st == "complete" and fails:
         fails.append("status 'complete' while the problems above remain -> fix them or use 'partial'")
     print("\n".join(["WARN: " + w for w in warns] + ["FAIL: " + f for f in fails]))

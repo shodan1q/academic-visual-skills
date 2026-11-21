@@ -14,7 +14,10 @@ SPEC = {"template": "template.pptx|.potx|starting_deck.pptx", "out": "/app/outpu
            "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words"], "body2": ["right column"],
            "font_size": 20, "image": "/app/work/fig2.png", "image_box": [x, y, w, h], "caption": "Fig. 2 ...",
            "table": [["head", "head"], ["1.0", "2.0"]], "table_box": [x, y, w, h], "table_size": 14,
-           "ph": {"13": ["text for placeholder idx 13"]}, "notes": "speaker notes", "source": "ignored by build"}]}
+           "source_note": "Paper Sec. 3, Table 1, p.2",   # -> layout placeholder named Source/Note/Ref, else small textbox above footer
+           "ph": {"13": ["text for placeholder idx 13"]}, "notes": "speaker notes", "source": "ignored by build"}],
+        "min_pt": 18}                           # optional: WARN when body text would render below this size
+Main body goes to the LARGEST body/obj placeholder (not the first one); every build prints "placed slide N: what->ph ..." - check it.
 Boxes are inches. Input slides that are not kept are dropped; masters, layouts, theme and media are never rewritten.
 Package files are edited as strings (no ElementTree re-serialisation), so namespaces/prefixes stay intact.
 """
@@ -27,6 +30,7 @@ NS = ('xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="
       'officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"')
 RT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
 GRP = '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>'
+NOTE = re.compile(r"source|note|ref|cit|来源|出处|注释|脚注", re.I)
 HEAD, FOOT = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n', ("ftr", "sldNum", "dt")
 q = lambda s: escape(str(s), {'"': "&quot;"})
 
@@ -135,11 +139,11 @@ def xfrm(b):
     return '<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>' % tuple(int(v) for v in b)
 
 def fit_warn(n, what, items, box, sz):
-    """Rough, deliberately conservative overflow estimate: CJK 1.05 em, latin 0.62 em, titles x1.15 (bold/display fonts), line 1.2 em, 0.25 in indent per level."""
+    """Rough, deliberately conservative overflow estimate: CJK 1.05 em, latin 0.62 em, titles x0.9 (calibrated on LibreOffice renders), line 1.2 em, 0.25 in indent per level."""
     if box and items:
         wpt, hpt = box[2] / 12700.0 - 14, box[3] / 12700.0 - 7
-        lines = sum(max(1, -(-sum(1.05 if ord(c) > 0x2e80 else 0.62 for c in t.replace("**", "")) * sz * (1.15 if "title" in what else 1) // max(wpt - 18 * l, 40))) for l, t in items_of(items))
-        if lines * sz * 1.2 > hpt:
+        lines = sum(max(1, -(-sum(1.05 if ord(c) > 0x2e80 else 0.62 for c in t.replace("**", "")) * sz * (0.9 if what == "title" else 1) // max(wpt - 18 * l, 40))) for l, t in items_of(items))
+        if lines * sz * 1.2 > hpt * (1.35 if what == "title" else 1) or (what == "title" and lines > 2):  # renderers let 2-line titles spill into the margin
             print("WARN slide %d %s: ~%d lines at %dpt need %.0fpt but box is %.0fpt high -> shorten, split slide or pick a bigger layout" % (n, what, lines, sz, lines * sz * 1.2, hpt))
 
 def imgsize(data):
@@ -197,11 +201,17 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
     if lay is None:
         print("WARN slide %d: layout %r not found -> using layout 2; run inspect and pick a listed name" % (n, s.get("layout")))
         lay = layouts[min(1, len(layouts) - 1)]
-    L, sh, nid = phs(rd(z, lay["path"])), [], [2]
+    L, sh, nid, used = phs(rd(z, lay["path"])), [], [2], []
     free = [p for p in L if p["type"] not in FOOT]
     R.append(("rId1", "slideLayout", "../slideLayouts/" + os.path.basename(lay["path"])))
     take = lambda pred: next((free.pop(free.index(p)) for p in list(free) if pred(p)), None)
     body_ph = lambda p: p["type"] in ("body", "obj")
+    area = lambda p: (lambda g: g[2] * g[3] if g else 0)(geom(z, lay, p))
+    def big(frac):  # LARGEST free body/obj placeholder (not a source/note box) covering >= frac of the slide
+        c = [p for p in free if body_ph(p) and area(p) >= frac * cx * cy and not NOTE.search(p["name"])]
+        return free.pop(free.index(max(c, key=area))) if c else None
+    mpt = lambda title: (lambda m: int(m.group(1)) // 100 if m else (32 if title else 18))(re.search(
+        r"<p:%s>.*?<a:lvl1pPr[^>]*>.*?sz=\"(\d+)\"" % ("titleStyle" if title else "bodyStyle"), rd(z, lay["master"]), re.S))
     def add(xml):
         nid[0] += 1
         sh.append(xml.replace("@ID@", str(nid[0])))
@@ -210,19 +220,34 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
             return print("WARN slide %d: layout %r has no free placeholder for %s -> pick another layout" % (n, lay["name"], what))
         add('<p:sp><p:nvSpPr><p:cNvPr id="@ID@" name="%s"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph %s/></p:nvPr></p:nvSpPr><p:spPr>%s</p:spPr>'
             '<p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>' % (q(p["name"]), p["attrs"], xfrm(box) if box else "", paras(body, sz)))
-        fit_warn(n, what, body, box or geom(z, lay, p), sz or p["sz"] or (32 if "itle" in p["type"] else 18))
+        g, eff = box or geom(z, lay, p), sz or p["sz"] or mpt(p["type"] in ("title", "ctrTitle"))
+        used.append("%s->ph %s idx%s %r %s %dpt" % (what, p["type"], p["idx"], p["name"], "%.1fx%.1fin" % (g[2] / EMU, g[3] / EMU) if g else "", eff))
+        fit_warn(n, what, body, g, eff)
+        if S.get("min_pt") and what in ("body", "body2") and eff < S["min_pt"]:
+            print("WARN slide %d %s: %dpt is below min_pt %s -> shorten/split instead of shrinking" % (n, what, eff, S["min_pt"]))
     for k, v in (s.get("ph") or {}).items():
         sp(take(lambda p: p["idx"] == str(k)), "ph idx %s" % k, v)
     if s.get("title"):
         sp(take(lambda p: p["type"] in ("title", "ctrTitle")), "title", [s["title"]])
     if s.get("subtitle"):
-        sp(take(lambda p: p["type"] == "subTitle") or take(body_ph), "subtitle", s["subtitle"])
-    pic, b1 = take(lambda p: p["type"] == "pic"), take(body_ph)
-    b2, vis = take(body_ph) if s.get("body2") else None, s.get("image") or s.get("table")
+        sp(take(lambda p: p["type"] == "subTitle") or big(0.03), "subtitle", s["subtitle"])
+    if s.get("source_note"):
+        snp = take(lambda p: body_ph(p) and NOTE.search(p["name"]))
+        if snp:
+            sp(snp, "source_note", [s["source_note"]])
+        else:
+            fy = min([geom(z, lay, p)[1] for p in L if p["type"] in FOOT and geom(z, lay, p)] or [cy - 0.5 * EMU])
+            add('<p:sp><p:nvSpPr><p:cNvPr id="@ID@" name="Source note"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>'
+                '<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p>%s</a:p></p:txBody></p:sp>' % (xfrm([0.5 * EMU, fy - 0.36 * EMU, cx - EMU, 0.34 * EMU]), runs(s["source_note"], 11)))
+            used.append("source_note->textbox above footer (layout has no source placeholder)")
+    pic, b1 = take(lambda p: p["type"] == "pic"), big(0.08) if s.get("body") else None
+    b2, vis = big(0.08) if s.get("body2") else None, s.get("image") or s.get("table")
     vbox = [v * EMU for v in s.get("image_box") or s.get("table_box") or []] or (pic and geom(z, lay, pic))
     if vis and not vbox and not s.get("body2"):
-        b2 = take(lambda p: body_ph(p) and p["box"])
+        b2 = big(0.15)
         vbox = b2 and geom(z, lay, b2)
+    if vis and not vbox and not s.get("body") and not b1:
+        b1 = big(0.15)
     g1, tbox = b1 and geom(z, lay, b1) or [0.5 * EMU, 1.5 * EMU, cx - EMU, cy - 2.3 * EMU], None
     if vis and not vbox:
         vbox, tbox = ([g1[0] + g1[2] * 0.53, g1[1], g1[2] * 0.47, g1[3]], [g1[0], g1[1], g1[2] * 0.5, g1[3]]) if s.get("body") else (g1, None)
@@ -248,8 +273,11 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
                 % (q(os.path.basename(s["image"])), rid, xfrm([x + (w - iw * k) / 2, y, iw * k, ih * k])))
             h = ih * k
         capsp = lambda yy: add('<p:sp><p:nvSpPr><p:cNvPr id="@ID@" name="Caption"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>'
-            '<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:pPr algn="ctr"/>%s</a:p></p:txBody></p:sp>' % (xfrm([x, yy, w, cap]), runs(s["caption"], 12)))
-        if s.get("caption") and s.get("image"):
+            '<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:pPr algn="ctr"/>%s</a:p></p:txBody></p:sp>' % (xfrm([x, yy, w, cap]), runs(s["caption"], s.get("caption_size", 14))))
+        cph = pic and s.get("caption") and s.get("image") and big(0.0)
+        if cph:  # picture layout with its own caption placeholder: inherit it
+            sp(cph, "caption", [s["caption"]])
+        elif s.get("caption") and s.get("image"):
             capsp(y + h)  # figure caption below the figure
         if s.get("table"):
             rows, tsz = s["table"], s.get("table_size", 14)
@@ -266,6 +294,7 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
             add('<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="@ID@" name="Table @ID@"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>'
                 '<p:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1"/>'
                 '<a:tblGrid>%s</a:tblGrid>%s</a:tbl></a:graphicData></a:graphic></p:graphicFrame>' % (x, y, w, rh * len(rows), '<a:gridCol w="%d"/>' % (w / nc) * nc, trs))
+    print("   placed slide %d [%s]: %s" % (n, lay["name"], "; ".join(used) or "-"))
     for p in L:
         val = {"ftr": S.get("footer"), "dt": S.get("date"), "sldNum": str(n) if S.get("slide_numbers", True) else None}[p["type"]] if p["type"] in FOOT else None
         if val or (p["type"] == "ftr" and "".join(text_of(p["block"])).strip()):

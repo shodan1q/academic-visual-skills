@@ -12,12 +12,13 @@ description: 学术汇报内容组织（轻量版）。当任务给出论文/研
 
 ## 模式
 generate = 材料+模板新建；edit = `template` 填 starting-deck，未改页 `{"keep": i}` 原样保留；adapt = `template` 填 target-template，
-starting-deck 每页都迁过去（`python3 $K inspect starting-deck.pptx --full` 抽文字，`unzip -o starting-deck.pptx 'ppt/media/*' -d $WORK_DIR/start` 取图）。
+starting-deck 每页都迁过去（`python3 $K inspect starting-deck.pptx --full > $WORK_DIR/start_text.txt` 抽文字，`unzip -o starting-deck.pptx 'ppt/media/*' -d $WORK_DIR/start` 取图）。
+有 starting-deck 时它只是素材，不是事实来源：其中每个数字、图/表号先在论文里核对，不一致**以论文为准**，写 `$WORK_DIR/corrections.md`（旧页 | deck 写法 | 论文写法+位置 | 处理）。
 
 ## 步骤（目标 ≤ 30 次调用；先交骨架再完善）
 1. **读输入**（2 次）：`cat $CASE_JSON`；`find /input -maxdepth 3 -type f | head -60`；读完 material.json、slide-workorder.json、task.md。
    记下 case_id、`output_contract` 全部字段、模式、**总页数**（exactly N 就正好 N）、**听众**、**时长**、**场合**、语言、模板、问答要求。
-2. **骨架**（第 5 次调用内）：`$OUT_DIR/result.json` = case_id + 每个 contract 字段占位 + `"status": "partial"`。
+2. **骨架**（第 3 次调用内）：`python3 $SKILL_DIR/scripts/check_result.py --init` → result.json 含 case_id、每个 contract 字段、`status: partial`；之后每步更新。
 3. **读材料**（2 次）：`pdftotext -layout paper.pdf $WORK_DIR/paper.txt`（`\f` 分页）；列题注与页码：
    `python3 -c "import re,sys;[print(i,l.strip()[:90]) for i,p in enumerate(open(sys.argv[1]).read().split('\f'),1) for l in p.splitlines() if re.match(r'\s*(Fig(ure)?\.?|Table|图|表)\s*S?\d',l)]" $WORK_DIR/paper.txt`
    加密/扫描件：qpdf / tesseract 可用就处理，否则列 exception。
@@ -38,11 +39,16 @@ starting-deck 每页都迁过去（`python3 $K inspect starting-deck.pptx --full
    备用页（backup）放在正文页之后，计入总页数前先看工作单是否允许；不允许就只写进 qa_prep.md。
 8. **看模板并构建**（3–5 次）：`python3 $K inspect <模板>` 选版式；需要的原图 `python3 $K figcrop paper.pdf 页 "Fig. 2" $WORK_DIR/fig2.png`
    （打印裁剪区内文字核对）；表格做成原生 `table`，数值逐格照抄。写 `$WORK_DIR/spec.json`（`"out": "$OUT_DIR/presentation.pptx"`），
-   `python3 $K build $WORK_DIR/spec.json`，**每条 WARN 都处理**（溢出→删字/拆页/换版式，不压字号）。备注 = 过渡句 + 强调点 + 追问时指向的证据 + 秒数。
+   `python3 $K build $WORK_DIR/spec.json | tee $WORK_DIR/build.log`。内容/图/表页加 `"source_note": "Paper Table 1, p.3"`（页上可见出处，进模板的来源占位符或页脚上方小字），
+   spec 顶层加 `"min_pt": 18`。build 每页打印 `placed slide N: body->ph obj idx1 ...`：核对正文进了版式里**面积最大**的占位符。
+   **字号阶梯**：标题 = 母版标题；正文 ≥ 工作单下限（没给就 18 pt）；表格 ≥ 14；图注 14；出处 11–12。**每条 WARN 都处理**（溢出→删字/拆页/换版式，
+   `font_size` 不低于阶梯）。备注 = 过渡句 + 强调点 + 追问时指向的证据 + 秒数。
 9. **导出**（2 次）：`cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_profile --convert-to pdf presentation.pptx`；
    `mkdir -p preview && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide`；`pdffonts presentation.pdf`。失败就照实记录。
 10. **映射、记录与自检**（3 次）：写 `content_map.json`、`talk_plan.md`/`plan.md` 复制到 `$OUT_DIR`、`change_log.md`，填 result.json；
-    `python3 $SKILL_DIR/scripts/check_result.py --source $WORK_DIR/paper.txt --template <模板> [--slides N]`，FAIL 必须修。
+    `python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template <模板> --min-pt <下限> [--slides N] [--source $WORK_DIR/start_text.txt]`
+    （有 starting-deck 才加 --source：抓"只在旧 deck 里出现的数字"和"图号与题注内容不符"）。checker 同时写 `$OUT_DIR/slide_audit.md`
+    （逐页版式、占位符、散装框、图片比例误差、最小字号、备注、PDF 丢字）。FAIL 必须修，最多两轮。
 
 ## 内容规则
 1. 不是压缩论文：页面只放服务目标的内容；被砍掉的内容在取舍表里有去向和理由。
@@ -54,14 +60,14 @@ starting-deck 每页都迁过去（`python3 $K inspect starting-deck.pptx --full
 7. 缺口照实：时长装不下、证据不足以支撑目标、材料缺图——写进 exceptions，并在 talk_plan 说明对目标的影响。
 
 ## 交付物（`$OUT_DIR`）
-`presentation.pptx`、`presentation.pdf`、`preview/*.png`、`talk_plan.md`（目标、听众画像、页数时长分配、证据强度、取舍表）、`plan.md`、
+`presentation.pptx`、`presentation.pdf`、`preview/*.png`、`slide_audit.md`、`talk_plan.md`（目标、听众画像、页数时长分配、证据强度、取舍表）、`plan.md`、
 `qa_prep.md`、`content_map.json`、`change_log.md`、`spec.json`、`result.json`。
 
 content_map 每行：`{"slide": 4, "role": "结果", "claim": "...", "evidence_strength": "强|中|弱", "evidence": [{"source": "paper.pdf",
 "locator": "Table 1, p.3", "quote": "..."}], "numbers": [...], "seconds": 60, "transition": "...", "qa_refs": ["Q2"]}`。
 
 ## result.json 映射（任何键名风格按含义对应；嵌套按子字段填）
-- 演示文件 / editable_source → `{"pptx", "spec", "rebuild", "slides", "layouts_used"}`；导出 / export_artifact → `{"pdf", "png", "pages", "renderer", "fonts"}`
+- 演示文件 / editable_source → `{"pptx", "spec", "rebuild", "slides", "layouts_used"}`；导出 / export_artifact → `{"pdf", "png", "pages", "renderer", "fonts", "substitutions", "slide_audit"}`
 - 页级证据映射 / content_map → content_map 内联列表 + 文件路径；合规检查 / compliance_checks → 页数、时长合计、模板继承、备注、溢出、数字回查、
   预览页数、字体，每项 `PASS/FAIL/WARN + 依据`；另加 `audience_goal`（目标句+听众画像）、`selection_log`（取舍表）、`qa_prep`（问题列表+文件路径）。
 - exceptions / 不确定性 → 材料缺失、无法判断、运行失败**分开列**；另写 `source_map`、`change_log`、`uncertainty`、`material_gaps`、`status_reasons`。

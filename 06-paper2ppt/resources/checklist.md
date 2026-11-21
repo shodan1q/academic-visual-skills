@@ -38,3 +38,8 @@
 - [ ] contract 每个字段都有实质内容；status 是一个词
 - [ ] exceptions 把"材料缺失 / 无法判断 / 运行失败"分开列
 - [ ] check_result.py PASS
+
+## 1.1 新增
+- [ ] build 的 `placed` 行：正文在面积最大的占位符，出处在 source_note；build.log 的 WARN 已处理或写进 uncertainty
+- [ ] 正文 ≥ 字号下限（checker `--min-pt`）；图片比例误差 ≤ 3%（slide_audit.md）
+- [ ] checker `--paper` 无 FAIL（有旧 deck 时加 `--source`）；slide_audit.md 已交付并在 result.json 里引用
