@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """svgfig (stdlib, py3.8+): layered, editable SVG figures from a JSON spec, plus source-level edits.
   build spec.json out.svg        spec -> SVG (layers, ids, data-src on every element) + out_elements.tsv
-                                 + out_content_map.json (elements / relations / data / legend, each with src)
   edit in.svg out.svg ID [--text "new label"] [--set attr=value ...]   change one element in place, rest untouched
   diff old.svg new.svg           element-level change log (proof that an edit kept the source)
 Spec keys: canvas{w,h,width_mm,title,font,grid{x0,y0,dx,dy}}, panels[{id,x,y,w,h,title,fill}], nodes[{id,label,cx,cy|col,row,
@@ -20,15 +19,7 @@ REF = {"tri": 9, "open": 9, "bar": 6, "dot": 10}
 FONT = "Arial, Helvetica, 'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', sans-serif"
 q = lambda s: escape(str(s), {'"': "&quot;"})  # noqa: E731
 
-TAG = re.compile(r"</?(i|sub|sup)>")
-def mark(l):  # inline markup in labels: <i>Ifnb1</i>, H<sub>2</sub>O, Ca<sup>2+</sup> -> styled tspans (still editable text)
-    e = escape(l)
-    for t, rep in (("i", '<tspan font-style="italic">'), ("sub", '<tspan baseline-shift="sub" font-size="75%">'), ("sup", '<tspan baseline-shift="super" font-size="75%">')):
-        e = e.replace("&lt;%s&gt;" % t, rep).replace("&lt;/%s&gt;" % t, "</tspan>")
-    return e
-
 def tw(s, fs, bold=False):
-    s = TAG.sub("", s)
     return sum(fs * (1.0 if ord(c) > 0x2E80 else (0.6 if bold else 0.56)) for c in s)
 
 def wrap(text, w, fs, bold=False):
@@ -43,13 +34,9 @@ def wrap(text, w, fs, bold=False):
         out.append(cur.rstrip())
     return out
 
-BOX = []  # text boxes of the current build, for the overlap check
 def txt(i, x, y, lines, fs, o, src="", anchor="middle", color="#111111"):
-    w = max([tw(l, fs, o.get("bold")) for l in lines] or [0]) * 0.8
-    x0 = x - {"middle": w / 2.0, "end": w}.get(anchor, 0)
-    BOX.append((i, x0, y - fs * 0.8, x0 + w, y - fs * 0.8 + fs * 1.2 * len(lines)))
     st = (' font-weight="bold"' if o.get("bold") else "") + (' font-style="italic"' if o.get("italic") else "")
-    sp = "".join('<tspan x="%.1f" dy="%s">%s</tspan>' % (x, "0" if k == 0 else "1.2em", mark(l)) for k, l in enumerate(lines))
+    sp = "".join('<tspan x="%.1f" dy="%s">%s</tspan>' % (x, "0" if k == 0 else "1.2em", escape(l)) for k, l in enumerate(lines))
     return '<text id="%s" x="%.1f" y="%.1f" font-size="%.1f" text-anchor="%s" fill="%s"%s data-src="%s">%s</text>' % (
         i, x, y, fs, anchor, o.get("color", color), st, q(src), sp)
 
@@ -63,11 +50,11 @@ def clip(n, px, py):
 
 def build(a):
     sp, out = json.load(open(a[0], encoding="utf-8")), a[1]
-    cv, warn, rows, marks, N, rel, dat = sp.get("canvas", {}), [], [], {}, {}, [], []
+    cv, warn, rows, marks, N = sp.get("canvas", {}), [], [], {}, {}
     W, H, g = cv.get("w", 1200), cv.get("h", 800), cv.get("grid", {})
     L = {k: [] for k in ("panels", "edges", "nodes", "data", "text", "legend")}
     def src(o, kind, text):
-        rows.append([o.get("id", "?"), kind, TAG.sub("", str(text)), o.get("src", "")])
+        rows.append([o.get("id", "?"), kind, text, o.get("src", "")])
         warn.extend([] if o.get("src") else ["no src for %s %s" % (kind, o.get("id"))])
         return o.get("src", "")
     def mk(head, col):
@@ -90,9 +77,6 @@ def build(a):
         L["nodes"].append('<ellipse %s cx="%s" cy="%s" rx="%s" ry="%s"/>' % (base, n["cx"], n["cy"], w / 2.0, h / 2.0) if sh in ("ellipse", "circle") else
                           '<polygon %s points="%s,%s %s,%s %s,%s %s,%s"/>' % (base, n["cx"], y, x + w, n["cy"], n["cx"], y + h, x, n["cy"]) if sh == "diamond" else
                           '<rect %s x="%s" y="%s" width="%s" height="%s" rx="%s"/>' % (base, x, y, w, h, {"round": 14, "band": 0}.get(sh, 4)))
-        fc = n.get("fill", "#FFFFFF")
-        if re.match(r"#[0-9a-fA-F]{6}$", fc) and sum(w_ * int(fc[k:k + 2], 16) for w_, k in ((.2126, 1), (.7152, 3), (.0722, 5))) / 255 < .45 and "color" not in n:
-            n["color"] = "#FFFFFF"  # dark fill -> white label (contrast)
         fs, pad = float(n.get("fs", 14)), (0.72 if sh in ("ellipse", "circle", "diamond") else 1.0)
         lines = wrap(n.get("label", ""), w * pad - 12, fs, n.get("bold"))
         while fs > 9 and (len(lines) * fs * 1.2 > h * pad - 4 or max(tw(l, fs) for l in lines) > w * pad - 8):
@@ -108,7 +92,6 @@ def build(a):
         if any(isinstance(e[k], str) and not ends[i] for i, k in enumerate(("from", "to"))):
             warn.append("edge %s refers to an unknown node id" % e.get("id"))
             continue
-        rel.append({"id": e["id"], "from": e["from"], "to": e["to"], "type": e.get("type", "step"), "color": col, "label": e.get("label", ""), "src": s})
         pts = [(n["cx"], n["cy"]) if n else tuple(e[k]) for n, k in zip(ends, ("from", "to"))]
         pts[1:1] = [tuple(v) for v in e.get("via", [])] or ([(pts[1][0], pts[0][1]) if e["elbow"] == "hv" else (pts[0][0], pts[1][1])] if e.get("elbow") else [])
         warn += ["edge %s: via point %s lies inside node %s (move it outside)" % (e.get("id"), v, k) for v in e.get("via", []) for k, n in N.items() if abs(v[0] - n["cx"]) < n["w"] / 2.0 and abs(v[1] - n["cy"]) < n["h"] / 2.0]
@@ -122,16 +105,11 @@ def build(a):
             e["id"], " ".join("%.1f,%.1f" % p for p in pts), col, e.get("width", 2), ' stroke-dasharray="%s"' % dash if dash else "", m, q(s)))
         if e.get("label"):
             k = len(pts) // 2
-            ll = str(e["label"]).split("\n")  # multi-line: e.g. reagents / conditions of a reaction step
-            mx, my, lw = (pts[k - 1][0] + pts[k][0]) / 2.0, (pts[k - 1][1] + pts[k][1]) / 2.0, max(tw(x, 12) for x in ll)
+            mx, my, lw = (pts[k - 1][0] + pts[k][0]) / 2.0, (pts[k - 1][1] + pts[k][1]) / 2.0, tw(e["label"], 12)
             vert = abs(pts[k][1] - pts[k - 1][1]) > abs(pts[k][0] - pts[k - 1][0])
-            lx, ly, anc = (mx + 7, my + 4, "start") if vert else (mx, my - 7 - 14.4 * (len(ll) - 1), "middle")
-            L["edges"].append('<rect id="%s-labelbg" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#FFFFFF" opacity="0.85"/>' % (e["id"], lx - 2 - (0 if vert else lw / 2), ly - 13, lw + 4, 16 + 14.4 * (len(ll) - 1)))
-            L["edges"].append(txt(e["id"] + "-label", lx, ly, ll, 12, e, s, anc, col))
-            lw2 = lw * 0.8  # tw() is a deliberately generous width estimate; use a realistic one for overlap
-            bx0, by0, bh = lx - (0 if vert else lw2 / 2), ly - 11, 13 + 14.4 * (len(ll) - 1)
-            warn += ["label of edge %s overlaps node %s: move nodes apart, shorten or split the label" % (e["id"], k) for k, n in N.items()
-                     if min(bx0 + lw2, n["cx"] + n["w"] / 2.0) - max(bx0, n["cx"] - n["w"] / 2.0) > 2 and min(by0 + bh, n["cy"] + n["h"] / 2.0) - max(by0, n["cy"] - n["h"] / 2.0) > 2]
+            lx, ly, anc = (mx + 7, my + 4, "start") if vert else (mx, my - 7, "middle")
+            L["edges"].append('<rect id="%s-labelbg" x="%.1f" y="%.1f" width="%.1f" height="16" fill="#FFFFFF" opacity="0.85"/>' % (e["id"], lx - 2 - (0 if vert else lw / 2), ly - 13, lw + 4))
+            L["edges"].append(txt(e["id"] + "-label", lx, ly, [e["label"]], 12, e, s, anc, col))
     for t in sp.get("texts", []):
         lines = wrap(t["text"], t["w"], t.get("fs", 14), t.get("bold")) if t.get("w") else str(t["text"]).split("\n")
         L["text"].append(txt(t["id"], t["x"], t["y"], lines, t.get("fs", 14), t, src(t, "text", t["text"]), t.get("anchor", "start")))
@@ -143,12 +121,11 @@ def build(a):
             v, er, s = float(i["value"]), float(i.get("err", 0)), src(dict(i, id="%s-bar%d" % (c["id"], k)), "bar", "%s=%s" % (i["label"], i["value"]))
             sc, bx = (base - c["y"] - 40) / vmax, c["x"] + bw * (0.5 + 1.5 * k)
             warn.extend(["negative value %s in %s: bars start at 0, use a different chart" % (v, c["id"])] if v < 0 else [])
-            dat.append({"id": "%s-bar%d" % (c["id"], k), "label": i["label"], "value": v, "err": er, "unit": u, "src": s})
             L["data"].append('<rect id="%s-bar%d" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" data-value="%s" data-src="%s"/>' % (c["id"], k, bx, base - v * sc, bw, v * sc, i.get("color", "#4C72B0"), v, q(s)))
             if er:
                 L["data"].append('<path id="%s-err%d" d="M%.1f,%.1f V%.1f M%.1f,%.1f h8 M%.1f,%.1f h8" stroke="#222222" fill="none" data-value="%s"/>' % (c["id"], k, bx + bw / 2, base - (v - er) * sc, base - (v + er) * sc, bx + bw / 2 - 4, base - (v + er) * sc, bx + bw / 2 - 4, base - (v - er) * sc, er))
             L["data"].append(txt("%s-val%d" % (c["id"], k), bx + bw / 2, base - (v + er) * sc - 5, [i.get("text", ("%g%s" if u[:1] in ("%", "", "-", "×", "°") else "%g %s") % (v, u))], 12, {}, s))
-            L["data"].append(txt("%s-lab%d" % (c["id"], k), bx + bw / 2, base + 15, str(i["label"]).split("\n"), 12, {}, s))
+            L["data"].append(txt("%s-lab%d" % (c["id"], k), bx + bw / 2, base + 15, [i["label"]], 12, {}, s))
         if c.get("title"):
             L["data"].append(txt(c["id"] + "-title", c["x"] + c["w"] / 2, c["y"] + 14, [c["title"]], 13, {"bold": 1}, s0))
     lg = sp.get("legend")
@@ -167,9 +144,6 @@ def build(a):
                 L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="30" height="13" fill="%s" stroke="#555555"/>' % (i, lg["x"], y, it["fill"]))
             L["legend"].append(txt(i, lg["x"] + 44, y + 11, [it["label"]], 12, {}, it.get("src", "legend"), "start"))
             y += 20
-        have = {(it["edge"], it.get("color", EDGE[it["edge"]][2])) for it in lg["items"] if it.get("edge")}
-        warn += ["legend has no item for edge type %r colour %s (used by %s)" % (t, c, i) for (t, c), i in sorted({(r["type"], r["color"]): r["id"] for r in rel}.items())
-                 if (t, c) not in have and t != "line"][:6]
     elif sp.get("edges") or sp.get("bars"):
         warn.append("no legend: add one item per edge type / fill colour used")
     if cv.get("title"):
@@ -180,12 +154,6 @@ def build(a):
         wa, ha, W, H, q(cv.get("font", FONT)), escape(cv.get("title", "figure")), "".join(marks.values()), body))
     with open(os.path.splitext(out)[0] + "_elements.tsv", "w", encoding="utf-8") as f:
         f.write("id\tkind\ttext\tsrc\n" + "".join("\t".join(re.sub(r"\s+", " ", str(c)) for c in r) + "\n" for r in rows))
-    warn += ["texts %s and %s overlap: move one, shorten or wrap" % (p[0], q_[0]) for k_, p in enumerate(BOX) for q_ in BOX[k_ + 1:]
-             if min(p[3], q_[3]) - max(p[1], q_[1]) > 2 and min(p[4], q_[4]) - max(p[2], q_[2]) > 2][:8]
-    warn += ["text %s runs outside the %sx%s canvas" % (p[0], W, H) for p in BOX if p[1] < -2 or p[3] > W + 2 or p[4] > H + 2][:5]
-    cm = {"svg": os.path.basename(out), "spec": os.path.basename(a[0]), "elements": [{"id": r[0], "kind": r[1], "text": r[2], "src": r[3]} for r in rows],
-          "relations": rel, "data": dat, "legend": (lg or {}).get("items", []), "warnings": warn}
-    json.dump(cm, open(os.path.splitext(out)[0] + "_content_map.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print("\n".join(["WARN: " + w for w in warn] or ["no warnings"]) + "\nwrote %s (%d elements; source table %s_elements.tsv)" % (out, len(rows), os.path.splitext(out)[0]))
 
 def edit(a):
