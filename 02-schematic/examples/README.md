@@ -1,53 +1,85 @@
 # 最小调用示例（示例 / synthetic，不是正式案例结果）
 
-材料、数值和输出全部为说明接口而虚构。
+以下材料、数值与输出全部为说明接口而虚构（一段合成的小鼠肠类器官谱系描述）。
 
 ## 1. 示例输入
-case 文件（示例）：
+case（示例）：
 ```json
-{"case_id": "example-02",
- "task": "示例：依据 materials/protocol.md 画类器官药筛实验流程示意图（中文标签），按 materials/groups.csv 的处理组着色并给图例；期刊单栏 85 mm，导出 PDF + PNG(600 dpi)。",
- "deliverables": {"source_file": "可编辑分层源文件路径", "export": "导出件路径与期刊参数检查",
-                  "trace": "元素来源与修改记录表", "status": "complete / partial / failed"}}
+{"case_id": "SIM02-SCHEMATIC-01", "workorder_type": "editable_relationship_schematic",
+ "materials": ["source/paper.pdf", "data/tableS2_cells.csv", "artifacts/figure-workorder.json"],
+ "output_contract": ["case_id", "status", "editable_source", "export_artifact", "content_map", "compliance_checks", "exceptions"]}
 ```
-`materials/protocol.md`（示例，节选）：
-```
-2 肿瘤组织经酶解得到单细胞悬液，接种于基质胶中培养 7 天形成类器官。
-3 类器官分为三组并行处理 72 h：溶剂对照、药物 A 1 µM、药物 A 10 µM。
-4 处理结束后进行 ATP 发光法活力检测与免疫荧光成像，两项检测并行。
-```
-`materials/groups.csv`（示例）：`group,label` / `vehicle,溶剂对照` / `A1,药物 A 1 µM` / `A10,药物 A 10 µM`
-
-## 2. 关系清单（示例，节选）
-| id | from | to | 关系 | 画法 | 来源 |
-|---|---|---|---|---|---|
-| r1 | 肿瘤组织 | 单细胞悬液 | 时序 | step | protocol.md:L2 |
-| r2 | 三个处理组 | — | 并列 | 同行同尺寸、无箭头，外框 panel | protocol.md:L3 |
-| r3 | 处理 | ATP / 免疫荧光 | 上下游 + 并行 | 一个分叉两条 step | protocol.md:L4 |
-
-## 3. 从数据表生成着色与图例（示例）
-```python
-G = list(csv.DictReader(open("/input/materials/groups.csv", encoding="utf-8")))
-pal = ["#BBBBBB", "#56B4E9", "#0072B2"]
-nodes += [{"id": "n-grp-" + g["group"], "label": g["label"], "cx": 70 + 130 * i, "cy": 210, "w": 116, "h": 40,
-           "fs": 13, "fill": pal[i], "src": "protocol.md:L3; groups.csv:row%d" % (i + 2)} for i, g in enumerate(G)]
-legend = {"x": 10, "y": 385, "items": [{"fill": pal[i], "label": g["label"]} for i, g in enumerate(G)] + [{"edge": "step", "label": "流程顺序"}]}
-spec["canvas"] = {"w": 400, "h": 470, "width_mm": 85, "title": "类器官药物处理流程（示例）", "title_fs": 15}
-```
-
-## 4. 命令与示意输出
-```
-$ python3 $S/scripts/svgfig.py build figure_spec.json figure.svg          -> no warnings (16 elements)
-$ timeout 300 python3 $S/scripts/export_check.py render figure.svg --dpi 600  -> canvas 321 x 377 px (= 85 mm), PDF 字体嵌入
-$ python3 -c "print(12*(85*3.78/400)*0.75)"                              -> 7.2 pt 最小有效字号
-$ python3 $S/scripts/svgfig.py edit figure.svg figure_v2.svg n-org-label --text "3 基质胶培养 7 天\n形成类器官"
-$ python3 $S/scripts/svgfig.py diff figure.svg figure_v2.svg
-  {"id": "n-org-label", "change": "text", "before": "3 基质胶培养 7 / 天 / 形成类器官", "after": "3 基质胶培养 7 天 / 形成类器官"}
-$ python3 $S/scripts/export_check.py check                               -> PASS
-```
-`result.json`（示例，节选）：
+工单（示例，节选）：
 ```json
-{"case_id": "example-02", "status": "complete",
- "export": {"width": "85 mm", "dpi": 600, "min_font_pt": 7.2, "pdf": "vector, fonts embedded"},
- "change_log": [{"version": "v2", "type": "演示编辑（标签换行修正），不属于正式图"}]}
+{"figure_id": "figure03", "panels": ["3a containment hierarchy", "3b lineage tree", "3c workflow"],
+ "must_show": ["containment (organoid > domain > cell type) distinct from lineage arrows", "secretory vs absorptive branch",
+               "Paneth-to-stem niche signal (activation)", "Notch repression of secretory fate",
+               "workflow steps in order with culture conditions and units"],
+ "export": {"formats": ["svg", "pdf", "png"], "width_mm": 180, "png_dpi": 600, "min_font_pt": 6},
+ "edit_request": "rename 'TA cells' to 'Transit-amplifying cells' and recolour the secretory lineage to #CC79A7; re-export and record the diff"}
+```
+paper.pdf 文本（示例，节选，行号来自 `pdftotext -layout`）：
+```
+ 4 Abstract Mouse small-intestinal organoids were grown for 7 days and profiled
+10 R1. Each organoid contains two epithelial domains. The crypt-like domain
+11 contains Lgr5+ stem cells, Paneth cells and transit-amplifying (TA) cells.
+18 R3. Paneth cells support the stem cells by secreting Wnt3 and EGF, which
+20 R4. Notch signalling in TA cells represses secretory differentiation via
+21 Hes1; ... Whether Hes1 acts directly on Atoh1 in organoids was not tested here.
+26 and cultured in ENR medium (EGF 50 ng/mL, Noggin 100 ng/mL, R-spondin 1 500
+27 ng/mL) for 4 days before dissociation, ...
+36 M1. Organoids were cultured for 7 days in ENR medium before single-cell
+```
+tableS2_cells.csv（示例，节选）：`cell_type,lineage,n_cells,domain` / `Lgr5+ stem cells,stem,1105,crypt-like` / `TA cells,progenitor,1460,crypt-like` / `Paneth cells,secretory,312,crypt-like`
+
+## 2. spec 片段（示例）
+```json
+{"canvas": {"w": 1000, "h": 870, "width_mm": 180,
+  "categories": {"csv": "/input/data/tableS2_cells.csv", "key": "cell_type", "column": "lineage",
+                 "colors": {"stem": "#009E73", "progenitor": "#F0E442", "secretory": "#E69F00", "absorptive": "#0072B2"},
+                 "title": "Lineage (Table S2)", "show": "n_cells", "fmt": "n = {}"}},
+ "panels": [{"id": "p-org", "parent": "p-a", "x": 35, "y": 85, "w": 440, "h": 420, "title": "Organoid", "src": "src.txt:L10"},
+            {"id": "p-crypt", "parent": "p-org", "x": 50, "y": 120, "w": 200, "h": 370, "title": "Crypt-like domain", "src": "src.txt:L10-11"},
+            {"id": "p-sec", "parent": "p-b", "x": 525, "y": 285, "w": 330, "h": 135, "title": "Secretory lineage", "src": "src.txt:L16-17"}],
+ "nodes": [{"id": "a-pan", "label": "Paneth cells", "kind": "cell_type", "comp": "p-crypt", "data": "Paneth cells", "cx": 150, "cy": 300, "w": 160, "h": 64, "src": "src.txt:L11"},
+           {"id": "s3", "label": "3 Culture in ENR medium, 7 d *", "kind": "step", "comp": "p-c", "cx": 385, "cy": 640, "w": 130, "h": 70, "src": "src.txt:L26-27; L4; L36"}],
+ "edges": [{"id": "e-niche", "from": "a-pan", "to": "a-stem", "type": "signal", "label": "Wnt3, EGF", "src": "src.txt:L18"},
+           {"id": "e-hes", "from": "b-hes1", "to": "p-sec", "type": "inhibit", "src": "src.txt:L20-21"}],
+ "texts": [{"id": "t-note", "text": "* Culture time: 7 d in Abstract and Methods M1; Results R6 says 4 d (unresolved).", "x": 35, "y": 835, "fs": 12, "src": "src.txt:L4; L27; L36"}],
+ "legend": {"x": 772, "y": 545, "title": "Legend"}}
+```
+标签 “Paneth cells” 由脚本自动变成 “Paneth cells / n = 312”（数字取自 CSV，不手抄）。
+
+## 3. 命令与输出（示例，本机 rsvg-convert）
+```bash
+python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec.json $OUT_DIR/figure.svg
+#  第一次 -> WARN: edges e-tabs and e-hes cross each other ...（调整两组位置后）-> no warnings
+#  21 entities, 38 relations (含 26 条 contains), 10 legend items (auto)
+timeout 300 python3 $S/scripts/export_check.py render $OUT_DIR/figure.svg --dpi 600
+#  -> PNG 4252 x 3700 px (180 mm @ 600 dpi); PDF vector, 19 fonts embedded
+python3 $S/scripts/pixcheck.py $OUT_DIR/figure.svg
+#  -> PASS: 21 nodes inspected, fills as declared, labels visible, every colour in legend
+python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec_v2.json $OUT_DIR/figure_v2.svg   # 只改 2 个 label + categories.colors.secretory
+python3 $S/scripts/svgfig.py diff $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg > $OUT_DIR/edit_diff.json
+#  -> 99 ids unchanged; 6 secretory nodes + legend-cat-secretory-glyph fill #E69F00 -> #CC79A7; a-ta/b-ta label text
+python3 $S/scripts/export_check.py check
+#  -> PASS: 7 contract field(s), status=partial, 0 fail / 0 warn
+```
+对照：若按旧做法逐个节点 `svgfig.py edit … --set fill=#CC79A7`，图例色块仍是旧色，pixcheck 报 `node b-pan colour #CB78A6 has no legend swatch of the same rendered colour`。
+
+## 4. result.json 节选（示例）
+```json
+{"case_id": "SIM02-SCHEMATIC-01", "status": "partial",
+ "status_reasons": ["culture duration contradicts (7 d in Abstract/M1 vs 4 d in R6); drawn as 7 d with footnote"],
+ "editable_source": {"svg": "figure.svg", "spec": "figure_spec.json", "edited": ["figure_v2.svg", "figure_spec_v2.json"]},
+ "content_map": {"file": "figure_content_map.json",
+   "relations": [{"id": "contains-a-pan", "from": "Crypt-like domain", "to": "Paneth cells", "type": "contains", "src": "src.txt:L11"},
+                 {"id": "e-hes", "from": "Hes1", "to": "Secretory lineage", "type": "inhibit", "evidence": "direct", "src": "src.txt:L20-21"}],
+   "data_encoding": {"file": "/input/data/tableS2_cells.csv", "category_column": "lineage",
+                     "nodes": [{"node": "a-pan", "key": "Paneth cells", "category": "secretory", "color": "#E69F00", "shown": {"n_cells": "312"}}]}},
+ "compliance_checks": [{"requirement": "Notch repression of secretory fate", "result": "pass",
+                        "element_ids": ["e-n-h", "e-hes"], "evidence": "Notch -> Hes1 -| secretory lineage (R4)"}],
+ "exceptions": [{"category": "contradiction", "detail": "Abstract L4 / Methods L36: 7 days; Results L27: 4 days", "handling": "7 d + footnote quoting both"},
+                {"category": "material_missing", "detail": "Tuft cells seen by imaging only, absent from Table S2", "handling": "not drawn"},
+                {"category": "undecidable", "detail": "Hes1 acting directly on Atoh1 not tested", "handling": "Atoh1 not drawn"}]}
 ```

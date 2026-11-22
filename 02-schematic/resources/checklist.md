@@ -1,26 +1,26 @@
-# 交付前自检清单（科研示意图）
+# 交付前自检清单（科研关系示意图）
 
-`python3 $S/scripts/export_check.py check` 得到 PASS 后，再逐条人工核对，并把结论写进 result.json 的 export_checks / run_notes：
+脚本能查的先让脚本查：`svgfig.py build` 无 WARN → `pixcheck.py` PASS → `export_check.py check` PASS。下面是脚本查不到、要对着原文人工过一遍的项（结论写进 compliance_checks 或 exceptions）。
 
-## 实体与关系
-- [ ] er.md 的每个实体都在图上，图上每个元素都在 er.md 里；节点、边、文字都带 `src`。
-- [ ] 名称、数量、浓度、时间、单位与材料原文一致，没有新增。
-- [ ] 包含关系用嵌套 panel（内层完全在外层内），没有用箭头表示包含；并列元素同行/同列、同尺寸、无箭头。
-- [ ] 上下游/时序箭头方向正确、阅读方向单一；步骤序号与材料顺序一致；并行分支画成并排。
-- [ ] 促进/抑制/结合/推测分别用 activate / inhibit / bind / indirect；“A 被 B 抑制”画成 B ⊣ A。
+## 实体（对照原文和 figure_content_map.json 的 entities）
+- [ ] 图上每个节点都能在原文/数据表找到；图注和结果段点名的实体没有漏画（漏了就写 exceptions）。
+- [ ] 没有材料以外的实体、浓度、时间点、数值、单位；表中数值由 `categories.show` 自动上图，不手抄。
+- [ ] 同一实体在两个子图出现时，显示名与 `data` 键一致。
 
-## 图例与数据映射
-- [ ] 类别数 = 图例色块数，类别名与数据表原文一致；每种边类型也在图例中。
-- [ ] 着色由脚本从数据表生成（数据变化可重跑），映射写进 data_mapping。
-- [ ] 配色色盲友好，灰度下靠形状/线型仍可区分。
+## 结构（对照 relations，含 `contains`）
+- [ ] 每条 `contains` 都有原文依据（“含有/由…组成/位于”）；同级元素在同一组、同尺寸，没有被画成包含。
+- [ ] 一个元素同时有“位置归属”和“类别归属”时：位置用嵌套，类别用颜色，没有混用。
+- [ ] step 序号与材料顺序一致；分支、并行处理画成并排。
+- [ ] 方向是因果方向；“A 被 B 抑制”画成 B ⊣ A；指向整个类群的关系连到 panel。
+- [ ] “未检验”“可能”“间接”都带了 `evidence: hypothesis/indirect`，没有画成实线。
 
-## 版式与导出
-- [ ] build 无 WARN；check 无越界、重叠、小字号告警。
-- [ ] 期刊尺寸：`width_mm` 已设（如有要求），有效最小字号 ≥ 6–7 pt（计算写进 export_checks）。
-- [ ] PNG（300/600 dpi）与 PDF（矢量、字体嵌入）来自 render；要求的 TIFF/EPS 已生成或已记为缺口。
-- [ ] 图上无内部 id、文件名、行号、TODO、占位文字；中文有 CJK 字体。
+## 图例与数据
+- [ ] 分类颜色来自 `canvas.categories`（CSV 实读），类别名与表一致、色块数 = 类别数；没有手挑的数据色。
+- [ ] 正文与数据表矛盾时按数据表上色，矛盾写进 exceptions: contradiction。
+- [ ] 灰度打印下靠线型/端点仍能区分关系类型（pixcheck 的灰度警告已处理或记录）。
 
-## 可编辑性与记录
-- [ ] figure_spec.json 与分层 figure.svg 在 /app/output；文字为 `<text>`。
-- [ ] 修改（或演示编辑）在源上完成，diff 只含预期改动，新版本已渲染，change_log 已写。
-- [ ] result.json：case_id、全部 contract 字段、status 一个词、status_reasons、uncertainties、material_gaps、needs_human_confirmation。
+## 导出与修改
+- [ ] 格式、宽度 mm、dpi 与工单一致；最小字号换算成 pt 后 ≥ 工单要求。
+- [ ] 修改在源上完成（spec_v2 重建；类别颜色改 categories.colors），`edit_diff.json` 只含预期改动；新版本已渲染并通过 pixcheck。
+- [ ] 修改请求引入了材料没有的内容时，exceptions 有 `user_request_not_in_source`。
+- [ ] result.json：全部 contract 字段齐全，status 一个词，status_reasons 与 exceptions 一致，没有“生成中”或 `<…>` 模板残留。
