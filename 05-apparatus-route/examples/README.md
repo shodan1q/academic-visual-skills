@@ -27,7 +27,7 @@ case 文件（示例）：
 | e-power | 恒电位仪 | 流动池 | 电 -1.2 V vs RHE | signal 虚线 | setup.md:L4 |
 | e-gas | 流动池 | GC | 气体 | flow 绿 | setup.md:L5 |
 | e-recirc | 流动池 | 储液罐 | 回流液 | flow 灰，via 从下方绕回 | setup.md:L6 |
-| — | 冷阱 | ? | ? | **不画**，列 material_gaps | setup.md:L7 |
+| — | 冷阱 | ? | ? | **不画**，exceptions `material_missing` | setup.md:L7 |
 
 ## 3. 规格片段（示例）
 ```json
@@ -49,5 +49,5 @@ $ python3 $S/scripts/export_check.py check                                   -> 
 ```json
 {"case_id": "example-05", "status": "partial",
  "status_reasons": ["冷阱位置材料未描述，未画（setup.md L7）"],
- "material_gaps": ["cold trap position"], "needs_human_confirmation": ["冷阱接在哪条管路"]}
+ "exceptions": [{"category": "material_missing", "detail": "cold trap position not stated (setup.md:L7)", "handling": "not drawn; ask the author"}]}
 ```

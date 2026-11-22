@@ -9,11 +9,12 @@
 | 路径 | 作用 |
 |---|---|
 | `SKILL.md` | 智能体执行说明：≤ 30 次调用的 9 步流程、面板—要点映射、版式与编码规则、spec 示例、result.json 规则、异常处理 |
-| `scripts/svgfig.py` | 标准库：`build` 规格 → 分层 SVG（id、data-src、语义箭头、自动换行、`bars` 数据小图带 data-value、图例、`width_mm` 物理尺寸、溢出/穿节点/via 点告警、元素来源表）；`edit` 按 id 改文字/属性；`diff` 元素级改动 |
-| `scripts/export_check.py` | 标准库：`tools` 探测渲染器与中文字体；`render` SVG → PNG/PDF（rsvg-convert → cairosvg → inkscape → Chrome → ImageMagick → LibreOffice，PDF 最后才退到栅格并标明），写 export_log.jsonl；`check` 核对 result.json 与全部交付物 |
+| `scripts/svgfig.py` | 标准库：`build` 规格 → 分层 SVG（id、data-src、语义箭头、自动换行、`bars` 数据小图带 data-value、图例、`width_mm` 物理尺寸、溢出/穿节点/via 点告警、元素来源表）；`edit` 按 id 改文字/属性；`diff` 元素级改动；另写 `<stem>_content_map.json`（元素/关系/数据，各带 src）；行内 `<i>` `<sub>` `<sup>`；边标签多行；告警：边标签压节点、文字互相重叠或出画布、图例缺边类型；深色填充自动白字 |
+| `scripts/export_check.py` | 标准库：`tools` 探测；`render` SVG → PNG/PDF（多渲染器回退，PDF 字体嵌入检查），写 export_log.jsonl；`check` 核对 result.json：contract 字段齐全且不是骨架“生成中”、无模板槽、只扫字符串叶子找占位、列出的产物存在、compliance_checks 的 element_ids 真实存在于 SVG、像素检查无 FAIL、exceptions 分类 |
+| `scripts/pixcheck.py` | 标准库：解码渲染出的 PNG（运行时模型看不见图片）：PNG 宽 = width_mm × 工单 dpi、打印最小字号 ≥ min_font_pt、不空白不裁切、节点按声明颜色渲染、标签有墨迹、WCAG 对比度、图例色块/线型与图面一致；写 `<stem>_pixel_check.json` |
 | `resources/checklist.md` | 交付前人工核对清单（四要素、实体关系、数据编码、图例版式、导出与可编辑性） |
 | `examples/README.md` | 最小调用示例（示例，合成数据） |
-| `benchmark/EVALUATION.md` | 设计理由、规则与失败形态对照、内部合成测试记录（无正式分数） |
+| `benchmark/EVALUATION.md` | 设计理由、规则与失败形态对照、内部合成测试记录（无正式评测结果） |
 
 ## 依赖
 - Python 3.8+ 标准库即可；渲染器自动探测，全部缺失时保留 SVG 并如实记录。`pdffonts` 可选（检查字体嵌入）。
@@ -26,6 +27,7 @@ python3 $S/scripts/export_check.py tools
 python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg
 python3 -c "import xml.etree.ElementTree as E;[print(e.get('id'),e.get('data-value'),e.get('height')) for e in E.parse('/app/output/figure.svg').iter() if e.get('data-value')]"
 timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi 300
+python3 $S/scripts/pixcheck.py /app/output/figure.svg --workorder /input/artifacts/figure-workorder.json
 python3 $S/scripts/svgfig.py build /app/output/figure_spec_v2.json /app/output/figure_v2.svg
 python3 $S/scripts/svgfig.py diff /app/output/figure.svg /app/output/figure_v2.svg
 python3 $S/scripts/export_check.py check
@@ -47,4 +49,8 @@ python3 $S/scripts/export_check.py check
 - 不判断研究结论本身是否成立，只保证图与材料一致、强度不过度。
 
 ## 维护
-版本 lite-1.0（2026-11）。改动脚本后用 examples/README.md 的示例重跑 build → render → check。
+版本 1.1（2026-11）。改动脚本后用 examples/README.md 的示例重跑 build → render → check。
+
+
+## 1.1 更新（2026-11）
+工单驱动的流程（第 3 次调用内写骨架；工单每一行对应一项 compliance_checks）、result.json 组装模板（editable_source / export_artifact / content_map / compliance_checks / exceptions）、`pixcheck.py` 像素自检、`check` 修正（骨架不再假通过、嵌套 JSON 不再误报、element_ids 必须存在、像素 FAIL 计入）、svgfig 的 content map 与重叠告警。

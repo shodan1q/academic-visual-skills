@@ -22,3 +22,9 @@
 - [ ] figure_spec.json + 分层 figure.svg + figure.png（300 dpi）+ figure.pdf（矢量、字体嵌入）+ export_log.jsonl；两张图各自齐全。
 - [ ] 修改（或演示编辑）在源上完成，diff 只含预期改动，新版本已渲染，change_log 已写。
 - [ ] result.json：case_id、全部 contract 字段、status 一个词、status_reasons、uncertainties、material_gaps、needs_human_confirmation。
+
+## 1.1 增补
+- [ ] `pixcheck.py` 对 figure.svg 与 figure_v2.svg 都 PASS：PNG 宽 = width_mm × dpi、最小打印字号 ≥ min_font_pt、标签可见、对比度、图例一致。
+- [ ] build 0 告警（含边标签压节点、文字重叠/出画布、图例缺项）。
+- [ ] compliance_checks 覆盖工单每一行，element_ids 都在 SVG 里；exceptions 每条有 category。
+- [ ] 基因斜体、化学式下标用 `<i>`/`<sub>`/`<sup>` 写在标签里。
