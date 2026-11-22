@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""export_check (stdlib, py3.8+). tools: renderers/modules/CJK fonts here | render in.svg [--png o.png]
+"""export_check (stdlib, py3.8+), chart edition. tools: renderers/modules/CJK fonts here | render in.svg [--png o.png]
 [--pdf o.pdf] [--dpi 300]: real PNG+PDF via fallback chain (120 s each), logged to export_log.jsonl | check:
 result.json vs output contract + all artifacts/previews/SVGs (env CASE_JSON, OUT_DIR; else /input/case.json, /app/output)"""
 import importlib.util, json, os, re, shutil, subprocess, sys
@@ -10,6 +10,7 @@ UNIT = {"px": 1, "mm": 3.7795, "cm": 37.795, "in": 96, "pt": 1.3333, "": 1}
 CKEYS = {"outputcontract", "outputschema", "requiredoutputs", "deliverables", "expectedoutputs", "outputfields", "输出契约", "输出要求", "交付要求", "输出字段"}
 WORDS = {"complete", "completed", "success", "partial", "failed", "incomplete", "done", "blocked"}
 BAD = re.compile(r"\bTODO\b|\bTBC\b|\bTBD\b|lorem|ipsum|待补充|占位|placeholder|XXX|\{\{|\}\}", re.I)
+TPL = re.compile(r"<[^<>\n\"]{0,60}[⺀-鿿…|][^<>\n\"]{0,60}>|\"…\"|pass\|partial\|fail|material_missing\|")  # unfilled template slots
 
 def run(args, t=120):
     try:
@@ -131,7 +132,7 @@ def svg_issues(p, mapped):
         nums |= set() if re.match(r"[xy]?tick", el.get("id") or "") else set(re.findall(r"\d+\.\d+|\d{2,}", s))  # axis ticks are not data
         m = re.findall(r"font-size\s*[:=]\s*\"?([\d.]+)", (el.get("style") or "") + ' font-size="%s"' % el.get("font-size", ""))
         fs = float(m[0]) if m else 12.0
-        if fs < 8:
+        if fs < 8 and not mpl:  # matplotlib SVG sizes are pt (7 pt is normal); pixcheck checks the min pt
             w.append("%s: font-size %.1f too small for %r" % (p.name, fs, s[:30]))
         lines = ["".join(t.itertext()) for t in el if t.tag.endswith("tspan")] or [s]
         if s and not mpl and "transform" not in el.attrib:
@@ -174,9 +175,12 @@ def check(a):
         F.append("status %r must be exactly one word of %s; reasons go to status_reasons" % (st, sorted(allowed)))
     if st.lower() not in ("complete", "completed", "success", "done") and empty(res.get("status_reasons")):
         F.append("status is not complete but status_reasons is empty")
-    Wn += ["standard block %r missing or empty" % k for k in ("artifacts", "source_map", "change_log", "export_checks") if empty(res.get(k))]
-    skip = re.compile(r"gap|uncertain|confirm|reason|note|limit|缺|待确认|不确定", re.I)
-    F += ["placeholder text (TODO/TBC/lorem/待补充) left in result.json field %r" % k for k, v in res.items() if not skip.search(k) and BAD.search(json.dumps(v, ensure_ascii=False))]
+    Wn += ["standard block %r missing or empty" % k[0] for k in (("artifacts",), ("source_map", "content_map"), ("change_log",), ("export_checks", "export_artifact")) if all(empty(res.get(x)) for x in k)]
+    F += ["contract field %r still holds skeleton text (生成中/pending): fill it with the real result" % k for k, _ in fl if re.search(r"生成中|^pending|in progress", json.dumps(res.get(k), ensure_ascii=False).strip('"'), re.I)]
+    F += ["field %r still contains template slots (<…>, …, a|b|c choices): fill them" % k for k, v in res.items() if TPL.search(json.dumps(v, ensure_ascii=False))]
+    skip = re.compile(r"gap|uncertain|confirm|reason|note|limit|exception|缺|待确认|不确定", re.I)
+    leaves = lambda v: [v] if isinstance(v, str) else sum((leaves(x) for x in (v.values() if isinstance(v, dict) else v)), []) if isinstance(v, (dict, list)) else []  # noqa: E731
+    F += ["placeholder text (TODO/TBC/lorem/待补充) left in result.json field %r" % k for k, v in res.items() if not skip.search(k) and BAD.search("\n".join(leaves(v)))]
     arts = [x.get("path") if isinstance(x, dict) else x for x in (res.get("artifacts") or []) if isinstance(x, (str, dict))]
     F += ["artifact listed but missing: %s" % p for p in arts if isinstance(p, str) and not (out / p).exists() and not Path(p).exists()]
     mapped = json.dumps(res, ensure_ascii=False) + "".join(q.read_text(encoding="utf-8", errors="ignore") for q in out.rglob("*") if q.suffix in (".md", ".csv", ".tsv", ".json") and q.is_file())
@@ -186,6 +190,27 @@ def check(a):
         if src.suffix.lower() == ".svg":
             f, w = svg_issues(src, mapped)
             F, Wn = F + f, Wn + w
+    ids = set().union(*[{e.get("id") for e in ET.parse(str(q)).getroot().iter()} for q in out.rglob("*.svg")] or [set()])
+    reqs = [r for v in res.values() if isinstance(v, list) for r in v if isinstance(r, dict) and "element_ids" in r]
+    F += ["requirement %r cites element id %r that is not in any output SVG" % (str(r.get("requirement", "?"))[:40], i) for r in reqs for i in r["element_ids"] if i not in ids]
+    Wn += [] if reqs else ["no requirement trace: list each workorder requirement with element_ids (compliance_checks)"]
+    svgs = [q for q in out.rglob("*.svg")]
+    if not svgs and st.lower() != "failed":
+        F.append("no chart SVG in the output dir: a status other than 'failed' needs a real chart")
+    for q in [x for x in out.rglob("*_marks_expected.csv")]:  # data-to-mark check must have run and passed for every chart
+        mc = q.with_name(q.name.replace("_marks_expected.csv", "_mark_check.json"))
+        v = json.loads(mc.read_text(encoding="utf-8")).get("verdict") if mc.exists() else None
+        F += [] if v == "PASS" else ["%s: data-to-mark check %s (run chartkit.py marks %s.svg %s)" % (q.name, "not run" if v is None else "is " + v, q.name.split("_marks")[0], q.name)]
+    pcs = list(out.rglob("*pixel_check.json"))
+    Wn += [] if pcs else ["no *_pixel_check.json: run pixcheck.py on every chart SVG"]
+    F += ["%s: %s" % (q.name, x) for q in pcs for x in json.loads(q.read_text(encoding="utf-8")).get("fails", [])]
+    exc = res.get("exceptions")
+    cats = {"material_missing", "undecidable", "contradiction", "run_failure", "user_request_not_in_source", "data_excluded"}
+    Wn += ["exception %r has no category from %s" % (str(e)[:50], sorted(cats)) for e in (exc if isinstance(exc, list) else []) if not (isinstance(e, dict) and e.get("category") in cats)]
+    cmw = sum((json.loads(q.read_text(encoding="utf-8")).get("warnings", []) for q in out.rglob("*_content_map.json")), [])
+    F += ["content map warns %r but exceptions is empty: record it (contradiction / data_excluded)" % cmw[0]] if cmw and empty(exc) else []
+    if st.lower() in ("complete", "completed", "success", "done") and isinstance(exc, list) and any(isinstance(e, dict) and e.get("category") in ("contradiction", "undecidable", "material_missing") and not e.get("resolved") for e in exc):
+        Wn.append("status is complete but exceptions hold unresolved contradiction/undecidable/material_missing items")
     if not list(out.rglob("export_log*")):
         Wn.append("no export_log.jsonl: run `export_check.py render` (or log your matplotlib savefig settings)")
     print("\n".join(["WARN: " + x for x in Wn[:40]] + ["FAIL: " + x for x in F]) or "no warnings")

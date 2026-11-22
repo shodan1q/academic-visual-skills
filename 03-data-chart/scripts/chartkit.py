@@ -4,7 +4,9 @@
                                                      xlsx sheets are also saved as DIR/<stem>__<sheet>.csv
   marks fig.svg expected.csv [--log]                 data-to-mark check: re-read mark geometry from the SVG by id
                                                      (matplotlib gid or own id); expected.csv columns id,value
-                                                     (value "a;b;c" for a series); linear (or log) fit, FAIL > 2 %
+                                                     (value "a;b;c" for a series; err-* = full error-bar span);
+                                                     calibrated from the y tick labels in the same SVG
+                                                     (else fitted); FAIL if off by > 1 % of the axis; writes <svg stem>_mark_check.json
   svgchart spec.json out.svg                         fallback bar/line/scatter SVG when matplotlib is missing
   diff old.svg new.svg                               element-level change log of an edit
 svgchart spec: {w,h,type:bar|line|scatter,title,xlabel,ylabel,ymin,ymax,categories[...],
@@ -81,7 +83,7 @@ def marks(a):
         pts = [p[0] for p in P if len(p) == 1]
         if len(vals) == 1:
             ys = [y for p in P for _, y in p]
-            barlike = any(len(p) >= 4 for p in P) or any(e.tag.endswith("rect") for e in els[i].iter())
+            barlike = i.startswith("err") or any(len(p) >= 4 for p in P) or any(e.tag.endswith("rect") for e in els[i].iter())  # error bar: span = upper - lower
             S.append((i, 0, vals[0], max(ys) - min(ys) if barlike else -sum(ys) / len(ys), "length" if barlike else "position"))
         else:
             seq = [-y for _, y in pts] if len(pts) == len(vals) else next(([-y for _, y in p] for p in P if len(p) == len(vals)), None)
@@ -89,23 +91,38 @@ def marks(a):
                 rep.append([i, "cannot match %d values to %d primitives" % (len(vals), len(P))])
                 continue
             S += [(i, k, v, m, "position") for k, (v, m) in enumerate(zip(vals, seq))]
-    for kind in sorted({s[4] for s in S}):  # bar lengths and point positions are fitted separately
+    cal = []  # axis calibration from the y tick labels drawn in the same SVG (matplotlib ytick_N groups)
+    for e in root.iter():
+        if re.match(r"ytick_\d+$", e.get("id") or "") and not log:
+            t = "".join("".join(x.itertext()) for x in e.iter() if x.tag.endswith("text")).strip().replace("\u2212", "-")
+            u = [p[0] for p in prims(e) if len(p) == 1]
+            if u and re.match(r"^-?[\d.]+(e-?\d+)?$", t):
+                cal.append((float(t), -u[0][1]))
+    if len(cal) >= 2:
+        mx, my = sum(c[0] for c in cal) / len(cal), sum(c[1] for c in cal) / len(cal)
+        b = sum((x - mx) * (y - my) for x, y in cal) / (sum((x - mx) ** 2 for x, _ in cal) or 1)
+        a0, span, how = my - b * mx, (max(c[1] for c in cal) - min(c[1] for c in cal)) or 1, "y-axis ticks %s" % [c[0] for c in cal]
+    for kind in sorted({s[4] for s in S}):
         G = [s for s in S if s[4] == kind]
         X, Y = [math.log10(v) if log else v for _, _, v, _, _ in G], [m for _, _, _, m, _ in G]
-        if len(G) < 2:
-            rep.append([G[0][0], "only one %s mark: cannot fit a scale" % kind])
-            continue
-        mx, my = sum(X) / len(X), sum(Y) / len(Y)
-        b = sum((x - mx) * (y - my) for x, y in zip(X, Y)) / (sum((x - mx) ** 2 for x in X) or 1)
-        span = (max(Y) - min(Y)) or 1
+        if len(cal) < 2:  # no readable ticks: fit (positions with intercept, lengths through the origin)
+            if len(G) < 2:
+                rep.append([G[0][0], "only one %s mark and no readable axis ticks: cannot calibrate" % kind])
+                continue
+            mx, my = sum(X) / len(X), sum(Y) / len(Y)
+            b = sum((x - mx) * (y - my) for x, y in zip(X, Y)) / (sum((x - mx) ** 2 for x in X) or 1) if kind == "position" else sum(x * y for x, y in zip(X, Y)) / (sum(x * x for x in X) or 1)
+            a0, span, how = my - b * mx, (max(Y) - min(Y)) or 1, "least-squares fit (weaker: one wrong high-leverage mark can be absorbed)"
         for (i, k, v, m, _), x in zip(G, X):
-            err = abs(my + b * (x - mx) - m) / span
-            rep.append([i if not k else "%s[%d]" % (i, k), "%s: value %g -> %.2f px, residual %.2f%% %s" % (kind, v, m, 100 * err, "OK" if err <= 0.02 else "MISMATCH")])
-        rep.append(["scale(%s)" % kind, "%.4f px per unit (%s)" % (b, "OK" if b > 0 else "NEGATIVE: axis inverted or wrong marks")])
+            err = abs((a0 if kind == "position" else 0) + b * x - m) / span
+            rep.append([i if not k else "%s[%d]" % (i, k), "%s: value %g -> %.2f px, residual %.2f%% of axis %s" % (kind, v, m, 100 * err, "OK" if err <= 0.01 else "MISMATCH")])
+        rep.append(["scale(%s)" % kind, "%.4f px per unit from %s (%s)" % (b, how, "OK" if b > 0 else "NEGATIVE: axis inverted or wrong marks")])
     print("\n".join("%s: %s" % tuple(r) for r in rep))
     bad = [r for r in rep if "MISMATCH" in r[1] or "MISSING" in r[1] or "NEGATIVE" in r[1] or "cannot" in r[1]]
-    print("%s: %d mark sample(s), %d problem(s)" % ("FAIL" if bad or len(S) < 2 else "PASS", len(S), len(bad)))
-    return 1 if bad or len(S) < 2 else 0
+    verdict = "FAIL" if bad or len(S) < 2 else "PASS"
+    print("%s: %d mark sample(s), %d problem(s)" % (verdict, len(S), len(bad)))
+    json.dump({"svg": a[0], "expected": a[1], "verdict": verdict, "samples": len(S), "problems": ["%s: %s" % tuple(r) for r in bad],
+               "lines": ["%s: %s" % tuple(r) for r in rep]}, open(os.path.splitext(a[0])[0] + "_mark_check.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    return 1 if verdict == "FAIL" else 0
 
 def nice(lo, hi):
     st = 10 ** math.floor(math.log10((hi - lo) / 5 or 1))
@@ -153,19 +170,31 @@ def svgchart(a):
     open(a[1], "w", encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d" font-family="%s">\n<rect id="background" width="100%%" height="100%%" fill="#FFFFFF"/>\n<g id="layer-chart">\n%s\n</g>\n</svg>\n' % (W, H, W, H, FONT.replace('"', ""), "\n".join(g)))
     print("wrote %s; marks have ids mark-<series>-<i> with data-value -> verify with: chartkit.py marks" % a[1])
 
-def index(path):  # matplotlib: text sits in <g id="text_N"><text>; hashed marker/clip ids (m1a2b3c4d5e) are noise
-    def txt(el):
-        return " ".join(" ".join(el.itertext()).split()) if el.tag.endswith("text") or any(c.tag.endswith("text") for c in el) else ""
-    return {el.get("id"): (el.tag.split("}")[-1], txt(el), {k: v for k, v in el.attrib.items() if k != "id"})
-            for el in ET.parse(path).getroot().iter() if el.get("id") and not re.match(r"^[mp][0-9a-f]{8,}$", el.get("id"))}
+HASH = re.compile(r"^[mp][0-9a-f]{8,}$")
+def index(path):  # each id'd element -> (tag, its visible text, style/geometry attrs of its subtree); hashed mpl ids are noise
+    out = {}
+    for el in ET.parse(path).getroot().iter():
+        i = el.get("id")
+        if not i or HASH.match(i):
+            continue
+        txt = " ".join("".join(el.itertext()).split()) if any(e.tag.endswith("text") for e in el.iter()) else ""
+        att = {}
+        for k, e in enumerate(el.iter()):
+            for at in ("fill", "stroke", "style", "d", "x", "y", "width", "height", "transform", "font-size", "points"):
+                if e.get(at) is not None:
+                    att["%s%s" % (at, "" if not k else "@%d" % k)] = re.sub(r"url\(#[^)]*\)", "", e.get(at))
+        out[i] = (el.tag.split("}")[-1], txt, att, {e.get("id") for e in el.iter() if e is not el and e.get("id")})
+    return out
 
 def diff(a):
     o, n = index(a[0]), index(a[1])
     ch = [{"id": k, "change": "removed"} for k in o if k not in n] + [{"id": k, "change": "added"} for k in n if k not in o]
-    for k in (k for k in o if k in n and o[k] != n[k]):
+    chg = {k for k in o if k in n and o[k][:3] != n[k][:3]}
+    for k in (k for k in chg if not (o[k][3] & chg)):  # report the innermost changed element, not its containers
         ch += [{"id": k, "change": "text", "before": o[k][1], "after": n[k][1]}] if o[k][1] != n[k][1] else []
-        ch += [{"id": k, "change": at, "before": o[k][2].get(at), "after": n[k][2].get(at)} for at in sorted(set(o[k][2]) | set(n[k][2])) if o[k][2].get(at) != n[k][2].get(at)]
-    print(json.dumps({"old": a[0], "new": a[1], "kept_ids": len(set(o) & set(n)), "changes": ch}, ensure_ascii=False, indent=1))
+        if o[k][1] == n[k][1] or not o[k][1]:
+            ch += [{"id": k, "change": at, "before": o[k][2].get(at), "after": n[k][2].get(at)} for at in sorted(set(o[k][2]) | set(n[k][2])) if o[k][2].get(at) != n[k][2].get(at)][:3]
+    print(json.dumps({"old": a[0], "new": a[1], "kept_ids": len(set(o) & set(n)), "changed_ids": sorted({c["id"] for c in ch}), "changes": ch[:40]}, ensure_ascii=False, indent=1))
 
 CMDS = {"table": table, "marks": marks, "svgchart": svgchart, "diff": diff}
 if __name__ == "__main__":

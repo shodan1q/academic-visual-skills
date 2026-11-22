@@ -1,26 +1,25 @@
 # 交付前自检清单（数据图表）
 
-`python3 $S/scripts/export_check.py check` 与 `chartkit.py marks` 都 PASS 后，再逐条人工核对，结论写进 result.json 的 annotation_check / export_checks：
+`chartkit.py marks`、`pixcheck.py`、`export_check.py check` 都 PASS 后，再逐条核对，结论写进 result.json 的 compliance_checks / exceptions：
 
 ## 数据 → 图元
-- [ ] 每个图元在 datamap.md 有一行：文件!行列、数值、单位、复算方式；均值/SD/SEM/n 由原始行复算。
-- [ ] 汇总表与原始数据不一致的地方已记为冲突，没有悄悄选一个。
-- [ ] `chart_marks_expected.csv` 由数据计算得到（不是从图元读出）；`marks` PASS，输出写进 mark_check。
-- [ ] 绘图用的数据已复制为 `chart_data.csv` 并注明来源文件/sheet；脚本直接读它。
+- [ ] `chart_data.csv` 是源数据的原样副本；`data_origin` 指向 /input 原文件，content map 里有两者 sha256。
+- [ ] 每个图元在 `chart_content_map.json` 有 x、系列、均值、误差、n、CSV 行号、样本 id；被排除的行有行号与原因。
+- [ ] `chart_mark_check.json` 为 PASS，比例尺来自 y 轴刻度（不是拟合）；误差线全长也在对账里。
+- [ ] 原文近似数、汇总表与数据复算不一致 → 按数据画，exceptions `contradiction` 写两处出处。
 
-## 标注
-- [ ] 轴标签 = 量 + 单位，量级换算写进单位；刻度覆盖全部数据与误差线；柱状图从 0 开始；对数轴已说明。
-- [ ] 图例项 = 系列，名称、数量与数据一致；单系列不放图例。
-- [ ] 误差线含义（SD/SEM/CI）写在图注并与数据核对；材料矛盾已列待确认。
-- [ ] 显著性符号只用于统计输出里存在的比较，阈值写在图注。
-- [ ] n 写明统计单位；基因斜体、物种、化合物名照抄材料。
+## 标注（出处写进配置 `src`）
+- [ ] 轴标签 = 量 + 单位/归一化；柱状图从 0 开始；对数轴在图注说明。
+- [ ] 图例项 = 系列，名称与数据取值或原文一致；单系列无图例。
+- [ ] `error` 与图注一致（sem / sd / ci95）；图注 n 与可用行数不符已记 exceptions。
+- [ ] 显著性只用原文报告的比较与符号，图注写检验方法；未重算 p 值。
+- [ ] n 写明统计单位；基因斜体、基因型上标、化合物缩写与全名照原文。
 
 ## 样式与导出
-- [ ] STYLE 字典集中了尺寸、字号、配色、dpi、标签；配色色盲友好、灰度可分。
-- [ ] SVG 文字可编辑（svg.fonttype none），PDF 字体嵌入（Type 42），PNG 达到要求 dpi；export_log.jsonl 有记录。
-- [ ] 中文标签：脚本打印的 CJK 字体不是 NONE，渲染无方框警告。
-- [ ] 无遮挡（标签、图例、括线不压数据点）。
+- [ ] `chart_pixel_check.json` 无 fails：PNG 宽 = width_mm × dpi，最小字号 ≥ 工单要求，柱色 = 图例色，色盲模拟可分。
+- [ ] SVG 文字可编辑（svg.fonttype none），PDF 字体 Type 42；实际字体（可能是替代字体）写进 export_artifact 与 status_reasons。
+- [ ] 无遮挡、无裁切（pixcheck 边缘告警已处理）。
 
 ## 可编辑性与记录
-- [ ] 修改（或演示编辑）通过改 STYLE/数据重跑脚本完成，输出 `chart_v2.*`；`chartkit.py diff` 记录改动；v2 也跑过 marks。
-- [ ] result.json：case_id、全部 contract 字段、status 一个词（contract 有 enum 用 enum）、status_reasons、uncertainties、material_gaps、needs_human_confirmation。
+- [ ] 修改通过 `edit_v2.json` + 重跑完成，`edit_diff.json` 只含预期改动；v2 也跑过 marks 与 pixcheck。
+- [ ] result.json：case_id、全部 contract 字段、status 一个词、status_reasons、compliance_checks 覆盖工单每一项（element_ids 真实存在）、exceptions 分类（material_missing / undecidable / contradiction / run_failure / user_request_not_in_source / data_excluded）。
