@@ -31,7 +31,7 @@
 ## 4. 每条规则拦住的是哪个问题（A 表的错误注入同一 spec 后实测）
 | A 表中的问题 | 拦截机制 | 实测输出（节选） |
 |---|---|---|
-| 1 骨架假通过 | check：contract 字段残留“生成中”、`<…>` 模板槽、对照表里不存在的 element_id 都判 FAIL | `contract field 'content_map' still holds skeleton text` |
+| 1 骨架假通过 | check：contract 字段残留“生成中”判 FAIL；`<…>` 模板槽、对照表里不存在的 element_id 判 WARN（1.2） | `contract field 'content_map' still holds skeleton text` |
 | 2 工单无对照 | SKILL 第 1 步读工单、第 8 步模板要求 compliance_checks 覆盖每条 must_show 且带 element_ids；无对照时 check 警告 | `no requirement trace: list each workorder requirement` |
 | 3 包含画错 | build：节点框必须完全在 `comp` 组内、不能落进别的组；子组不得出界；兄弟组不得交叠 | `panel p-villus sticks out of its parent p-org`；`node a-pan is not fully inside its group p-crypt` |
 | 4 图例脱节 | `canvas.categories` 读 CSV 一类一色、自动图例；build 报无图例的颜色；pixcheck 在像素上比对节点与图例 | `fill #56B4E9 used on nodes but has no legend item`；`node b-pan colour #CB78A6 has no legend swatch` |
@@ -45,3 +45,6 @@
 - “这句话是包含还是产生”“证据算不算已检验”仍是模型判断；脚本只保证判断被显式记录、被一致地画出。
 - 纯文本模型看不到 PDF 中原图的像素，只能依据图注与正文；这一点会写进 exceptions。
 - pixcheck 对超过约 260 万像素的导出图通过同源 1200 px 重渲染来检查，不逐像素解码原图。
+
+## 1.2 调整（2026-11）
+1.1 步骤更多、门槛更硬，运行预算内容易在可选检查上返工。1.2 回到 1.0 的九步流程（步骤短、WARN 可记录不必清零），只保留风险低的部分：build 自动出 content_map、组内包含与图例核对、CSV 分类着色、check 对残留“生成中”判 FAIL 与逐个字符串叶子扫占位词。pixcheck 只给提示；`kind`/`comp` 缺省降为 NOTE，旧式 spec 不再产生 WARN。

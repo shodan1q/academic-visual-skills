@@ -1,6 +1,6 @@
 # 交付前自检清单（科研关系示意图）
 
-脚本能查的先让脚本查：`svgfig.py build` 无 WARN → `pixcheck.py` PASS → `export_check.py check` PASS。下面是脚本查不到、要对着原文人工过一遍的项（结论写进 compliance_checks 或 exceptions）。
+脚本能查的先让脚本查：`svgfig.py build` 的 WARN 已改或记录 → `export_check.py check` PASS（`pixcheck.py` 可选，只给提示）。下面是脚本查不到、要对着原文人工过一遍的项（结论写进 compliance_checks 或 exceptions）。
 
 ## 实体（对照原文和 figure_content_map.json 的 entities）
 - [ ] 图上每个节点都能在原文/数据表找到；图注和结果段点名的实体没有漏画（漏了就写 exceptions）。
@@ -21,6 +21,6 @@
 
 ## 导出与修改
 - [ ] 格式、宽度 mm、dpi 与工单一致；最小字号换算成 pt 后 ≥ 工单要求。
-- [ ] 修改在源上完成（spec_v2 重建；类别颜色改 categories.colors），`edit_diff.json` 只含预期改动；新版本已渲染并通过 pixcheck。
+- [ ] 修改在源上完成（spec_v2 重建；类别颜色改 categories.colors），`edit_diff.json` 只含预期改动；新版本已渲染。
 - [ ] 修改请求引入了材料没有的内容时，exceptions 有 `user_request_not_in_source`。
 - [ ] result.json：全部 contract 字段齐全，status 一个词，status_reasons 与 exceptions 一致，没有“生成中”或 `<…>` 模板残留。

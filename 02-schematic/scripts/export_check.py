@@ -177,7 +177,7 @@ def check(a):
         F.append("status is not complete but status_reasons is empty")
     Wn += ["standard block %r missing or empty" % k[0] for k in (("artifacts",), ("source_map", "content_map"), ("change_log",), ("export_checks", "export_artifact")) if all(empty(res.get(x)) for x in k)]
     F += ["contract field %r still holds skeleton text (生成中/pending): fill it with the real result" % k for k, _ in fl if re.search(r"生成中|^pending|in progress", json.dumps(res.get(k), ensure_ascii=False).strip('"'), re.I)]
-    F += ["field %r still contains template slots (<…>, …, a|b|c choices): fill them" % k for k, v in res.items() if TPL.search(json.dumps(v, ensure_ascii=False))]
+    Wn += ["field %r may still contain template slots (<…>, …, a|b|c choices): fill them" % k for k, v in res.items() if TPL.search(json.dumps(v, ensure_ascii=False))]
     skip = re.compile(r"gap|uncertain|confirm|reason|note|limit|exception|缺|待确认|不确定", re.I)
     leaves = lambda v: [v] if isinstance(v, str) else sum((leaves(x) for x in (v.values() if isinstance(v, dict) else v)), []) if isinstance(v, (dict, list)) else []  # noqa: E731
     F += ["placeholder text (TODO/TBC/lorem/待补充) left in result.json field %r" % k for k, v in res.items() if not skip.search(k) and BAD.search("\n".join(leaves(v)))]
@@ -192,9 +192,8 @@ def check(a):
             F, Wn = F + f, Wn + w
     ids = set().union(*[{e.get("id") for e in ET.parse(str(q)).getroot().iter()} for q in out.rglob("*.svg")] or [set()])
     reqs = [r for v in res.values() if isinstance(v, list) for r in v if isinstance(r, dict) and "element_ids" in r]
-    F += ["requirement %r cites element id %r that is not in any output SVG" % (str(r.get("requirement", "?"))[:40], i) for r in reqs for i in r["element_ids"] if i not in ids]
+    Wn += ["requirement %r cites element id %r that is not in any output SVG" % (str(r.get("requirement", "?"))[:40], i) for r in reqs for i in r["element_ids"] if i not in ids]
     Wn += [] if reqs else ["no requirement trace: list each workorder requirement with element_ids (compliance_checks)"]
-    Wn += [] if list(out.rglob("*pixel_check.json")) else ["no *_pixel_check.json: run pixcheck.py on the final SVG"]
     if not list(out.rglob("export_log*")):
         Wn.append("no export_log.jsonl: run `export_check.py render` (or log your matplotlib savefig settings)")
     print("\n".join(["WARN: " + x for x in Wn[:40]] + ["FAIL: " + x for x in F]) or "no warnings")

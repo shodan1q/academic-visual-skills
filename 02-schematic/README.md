@@ -55,4 +55,4 @@ python3 $S/scripts/export_check.py check
 - CMYK、EPS、TIFF 依赖环境里的 inkscape/ImageMagick，缺失时记为缺口。
 
 ## 维护
-版本 lite-1.1（2026-11）。改脚本后用 examples/README.md 的示例重跑 build → render → pixcheck → check。
+版本 lite-1.2（2026-11）：回到 1.0 的九步流程，保留 1.1 的 content_map、嵌套/图例自动核对、CSV 分类着色和骨架残留检测；pixcheck 改为只提示（WARN、退出码 0），模板槽与 element_id 核对降为 WARN。改脚本后用 examples/README.md 的示例重跑 build → render → pixcheck → check。

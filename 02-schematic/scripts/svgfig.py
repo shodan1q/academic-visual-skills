@@ -142,7 +142,7 @@ def build(a):
         if kd in ("protein", "complex", "family") and n["italic"] or kd in ("gene", "mrna") and not n["italic"]:
             warn.append("node %s: kind %s but italic=%s (genes/mRNA italic, proteins upright)" % (n["id"], kd, n["italic"]))
         if kd not in KINDS:
-            warn.append("node %s: kind %r not one of %s" % (n["id"], kd, " ".join(sorted(KINDS))))
+            warn.append("NOTE node %s: kind %r not in the known list (optional): %s" % (n["id"], kd, " ".join(sorted(KINDS))))
         nb = (n["cx"] - n["w"] / 2.0, n["cy"] - n["h"] / 2.0, n["cx"] + n["w"] / 2.0, n["cy"] + n["h"] / 2.0)
         deep = [k for k in P if box_in(nb, P[k]) and not any(k2 != k and box_in(nb, P[k2]) and k in anc(k2) for k2 in P)]
         if n.get("comp") and n["comp"] not in P:
@@ -152,7 +152,7 @@ def build(a):
         elif n.get("comp") and deep and n["comp"] not in deep:
             warn.append("node %s is drawn inside %s but comp says %s: move it or fix comp" % (n["id"], deep[0], n["comp"]))
         elif not n.get("comp") and deep:
-            warn.append("node %s sits inside panel %s but has no comp: declare membership or move it out" % (n["id"], deep[0]))
+            warn.append("NOTE node %s sits inside panel %s without comp (optional; add comp=%s if it belongs to that group)" % (n["id"], deep[0], deep[0]))
         if n.get("comp") in PT:
             cm["relations"].append({"id": "contains-" + n["id"], "from": PT[n["comp"]].get("title", n["comp"]), "to": n.get("label", n["id"]), "type": "contains", "evidence": "", "label": "", "src": s})
         dv = None
@@ -289,7 +289,7 @@ def build(a):
     cm["spec"], cm["spec_sha256_16"] = a[0], hashlib.sha256(open(a[0], "rb").read()).hexdigest()[:16]
     cmp_ = os.path.splitext(out)[0] + "_content_map.json"
     json.dump(cm, open(cmp_, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    print("\n".join(["WARN: " + w for w in warn] or ["no warnings"]) + "\nwrote %s and %s (%d entities, %d relations, %d legend items)" % (
+    print("\n".join([("NOTE: " + w[5:]) if w.startswith("NOTE ") else "WARN: " + w for w in warn] or ["no warnings"]) + "\nwrote %s and %s (%d entities, %d relations, %d legend items)" % (
         out, cmp_, len(cm["entities"]), len(cm["relations"]), len(cm["legend"])))
 
 def edit(a):

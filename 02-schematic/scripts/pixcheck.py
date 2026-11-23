@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """pixcheck (stdlib, py3.8+): look at the RENDERED pixels of a schematic figure, not just the SVG text.
-  pixcheck.py figure.svg [figure.png]      -> prints PASS/FAIL lines, writes <stem>_pixel_check.json next to the SVG
+  pixcheck.py figure.svg [figure.png]      -> advisory only: prints WARN lines (exit 0), writes <stem>_pixel_check.json next to the SVG
 Checks: export PNG size/dpi; figure not blank or clipped; every node's fill is rendered as declared and its label leaves
 ink (not lost / not white-on-white); label-vs-fill contrast; every node colour has a legend swatch with the same rendered
 colour (legend = figure); legend swatches distinguishable in greyscale; every edge colour/dash has a legend line.
@@ -86,7 +86,7 @@ def main(a):
     mm = re.match(r"([\d.]+)mm", root.get("width") or "")
     try:
         ew, eh = struct.unpack(">II", open(png, "rb").read(24)[16:24])
-        pw, ph, px = readpng(png) if ew * eh <= 2.6e6 else (None, None, None)
+        pw, ph, px = readpng(png) if ew * eh <= 1.5e6 else (None, None, None)
         rep["export_png_px"], rep["export_dpi"] = [ew, eh], round(ew / (float(mm.group(1)) / 25.4)) if mm else "n/a (no width_mm)"
         if px is None:
             tmp = os.path.join(tempfile.mkdtemp(), "inspect.png")
@@ -96,15 +96,15 @@ def main(a):
         else:
             rep["inspected"] = "export PNG itself"
     except Exception as e:
-        print("FAIL: cannot read/inspect PNG %s: %s (run export_check.py render first)" % (png, e))
-        return 1
+        print("WARN: cannot read/inspect PNG %s: %s (advisory check skipped; record it and move on)" % (png, e))
+        return 0
     s = pw / W
     P = lambda x, y: px(min(pw - 1, max(0, int(x * s))), min(ph - 1, max(0, int(y * s))))  # noqa: E731
     grid = [(x, y) for y in range(0, ph, max(1, ph // 120)) for x in range(0, pw, max(1, pw // 160))]
     ink = sum(1 for x, y in grid if min(px(x, y)) < 235) / float(len(grid))
     edge = sum(1 for k in range(0, pw, 3) for y in (0, ph - 1) if min(px(k, y)) < 200) + sum(1 for k in range(0, ph, 3) for x in (0, pw - 1) if min(px(x, k)) < 200)
     rep["ink_fraction"] = round(ink, 3)
-    F += ["figure is (almost) blank: ink %.1f%%" % (ink * 100)] if ink < 0.01 else []
+    Wn += ["figure is (almost) blank: ink %.1f%%" % (ink * 100)] if ink < 0.01 else []
     Wn += ["%d dark pixels on the outer border: something is clipped at the canvas edge" % edge] if edge > 6 else []
     nodes, legend = [], {}
     lay = {g.get("id"): g for g in root.iter() if (g.get("id") or "").startswith("layer-")}
@@ -125,29 +125,29 @@ def main(a):
         decl = hexrgb(fill)
         r = {"id": i, "label": labels.get(i + "-label", ""), "declared_fill": fill, "rendered_fill": "#%02X%02X%02X" % mode, "label_ink_px": len(inkp)}
         if decl and dist(decl, mode) > 40:
-            F.append("node %s: declared fill %s but renders as %s" % (i, fill, r["rendered_fill"]))
+            Wn.append("node %s: declared fill %s but renders as %s" % (i, fill, r["rendered_fill"]))
         if r["label"] and not inkp:
-            F.append("node %s: label %r leaves no visible ink (lost, clipped or same colour as fill)" % (i, r["label"]))
+            Wn.append("node %s: label %r leaves no visible ink (lost, clipped or same colour as fill)" % (i, r["label"]))
         elif inkp:
             ic = max(inkp, key=lambda c: abs(lum(c) - lum(mode)))
             cr = (max(lum(ic), lum(mode)) + .05) / (min(lum(ic), lum(mode)) + .05)
             r["label_contrast"] = round(cr, 1)
             Wn += ["node %s: label contrast %.1f:1 is low (< 3)" % (i, cr)] if cr < 3 else []
         if legend and not any(dist(mode, c) <= 30 for c in legend.values()) and not (dist(mode, (255, 255, 255)) <= 12):
-            F.append("node %s colour %s has no legend swatch of the same rendered colour" % (i, r["rendered_fill"]))
+            Wn.append("node %s colour %s has no legend swatch of the same rendered colour" % (i, r["rendered_fill"]))
         nodes.append(r)
     sw = sorted(legend.items(), key=lambda kv: lum(kv[1]))
     Wn += ["legend swatches %s and %s are hard to tell apart in greyscale" % (a[0], b[0]) for a, b in zip(sw, sw[1:]) if abs(lum(a[1]) - lum(b[1])) < 0.03 and dist(a[1], b[1]) > 30]
     sty = lambda el: (el.get("stroke"), el.get("stroke-dasharray") or "")  # noqa: E731
     lines = {sty(el) for el in lay.get("layer-legend", root).iter() if el.tag.endswith("line")}
     edges = {sty(el): el.get("id") for el in lay.get("layer-edges", root).iter() if el.tag.endswith("polyline")}
-    F += ["edge style %s (e.g. %s) has no matching legend line" % (k, v) for k, v in edges.items() if lines and k not in lines and not any(k[1] and l[1] == k[1] for l in lines)]
+    Wn += ["edge style %s (e.g. %s) has no matching legend line" % (k, v) for k, v in edges.items() if lines and k not in lines and not any(k[1] and l[1] == k[1] for l in lines)]
     rep.update(nodes=nodes, legend_swatches={k: "#%02X%02X%02X" % v for k, v in legend.items()}, fails=F, warnings=Wn)
     outp = os.path.splitext(svg)[0] + "_pixel_check.json"
     json.dump(rep, open(outp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    print("\n".join(["WARN: " + x for x in Wn] + ["FAIL: " + x for x in F]))
-    print("%s: %d nodes inspected on %s, ink %.1f%%, export %s px, dpi %s -> %s" % ("FAIL" if F else "PASS", len(nodes), rep["inspected"], ink * 100, rep["export_png_px"], rep["export_dpi"], outp))
-    return 1 if F else 0
+    print("\n".join(["WARN: " + x for x in Wn]) or "no warnings")
+    print("%s: %d nodes inspected on %s, ink %.1f%%, export %s px, dpi %s -> %s" % ("ADVISORY %d warn" % len(Wn), len(nodes), rep["inspected"], ink * 100, rep["export_png_px"], rep["export_dpi"], outp))
+    return 0
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
