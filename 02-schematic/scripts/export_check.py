@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """export_check (stdlib, py3.8+). tools: renderers/modules/CJK fonts here | render in.svg [--png o.png]
 [--pdf o.pdf] [--dpi 300]: real PNG+PDF via fallback chain (120 s each), logged to export_log.jsonl | check:
-result.json vs output contract + all artifacts/previews/SVGs (env CASE_JSON, OUT_DIR; else /input/case.json, /app/output)"""
+result.json vs output contract + all artifacts/previews/SVGs (env CASE_JSON, OUT_DIR; else /input/case.json, /app/output) |
+figtext src.txt N: caption, in-figure labels and citing lines of figure N in pdftotext output"""
 import importlib.util, json, os, re, shutil, subprocess, sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -200,7 +201,45 @@ def check(a):
     print("%s: %d contract field(s), status=%s, %d fail / %d warn" % ("FAIL" if F else "PASS", len(fl), st or "?", len(F), len(Wn)))
     return 1 if F else 0
 
-CMDS = {"tools": tools, "render": render, "check": check}
+def figtext(a):
+    """figtext src.txt N: caption of figure N, the short labels printed inside it (vector PDFs keep them as text),
+    and every line that cites it. Line numbers match src.txt (pdftotext -layout output; pages split by form feed)."""
+    if len(a) < 2:
+        print("usage: figtext /app/work/src.txt 3")
+        return 2
+    lines, n = Path(a[0]).read_text(encoding="utf-8", errors="replace").split("\n"), a[1]
+    cap_re = re.compile(r"^\s*(Figure|Fig\.?|FIGURE|FIG\.?|图)\s*%s(?![0-9])\s*[.:|。．]?" % re.escape(n))
+    cite = re.compile(r"(Fig(ure)?s?\.?|图)\s*%s(?![0-9])" % re.escape(n), re.I)
+    page, k = [], 0
+    for l in lines:
+        k += l.count("\f")
+        page.append(k)
+    caps = [i for i, l in enumerate(lines) if cap_re.match(l.replace("\f", ""))]
+    if not caps:
+        print("no caption line starting with 'Figure %s' found; grep the text for the figure title instead" % n)
+    for c in caps[:2]:
+        end = c
+        while end + 1 < len(lines) and lines[end + 1].strip() and page[end + 1] == page[c] and end - c < 14:
+            end += 1
+        print("caption of figure %s: src.txt:L%d-%d (page %d)" % (n, c + 1, end + 1, page[c] + 1))
+        for i in range(c, end + 1):
+            print("  L%d %s" % (i + 1, lines[i].strip()))
+        same = [i for i in range(len(lines)) if page[i] == page[c] and not c <= i <= end]
+        lab, where = [], []
+        for i in same:
+            toks = [t.strip() for t in re.split(r"\s{2,}", lines[i].replace("\f", "")) if t.strip()]
+            if toks and (len(toks) > 1 or len(toks[0].split()) <= 5) and not (len(toks) == 1 and len(toks[0]) > 60):
+                lab += [t for k_, t in enumerate(toks) if len(t) <= 40 and t not in lab and t not in toks[:k_]]
+                where.append(i + 1)
+        if lab:
+            print("short text on the same page, outside the caption (usually the labels drawn in the original figure; lines L%d-%d):" % (min(where), max(where)))
+            print("  " + " | ".join(lab[:80]))
+        else:
+            print("no short label text on that page: the original figure is probably an image; rely on caption and results text")
+    refs = [i + 1 for i, l in enumerate(lines) if cite.search(l) and not any(c <= i <= c + 14 for c in caps)]
+    print("lines citing figure %s: %s" % (n, " ".join("L%d" % i for i in refs[:40]) or "none"))
+
+CMDS = {"tools": tools, "render": render, "check": check, "figtext": figtext}
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in CMDS:
         print(__doc__)

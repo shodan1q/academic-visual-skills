@@ -8,14 +8,16 @@ breaks[],colors[],title,src}}, panels[{id,x,y,w,h,title,parent,fill,src}] (paren
 nodes[{id,label,kind,comp,data,cx,cy|col,row,w,h,shape,fill,fs,italic,bold,aliases,src}], edges[{id,from,to (node or panel id),
 type,evidence,label,via[[x,y]],elbow,width,both,src}], texts[{id,text,x,y,fs,w,src}], legend{x,y,title,items[]} (auto-filled).
 comp = id of the innermost panel the node belongs to (containment).  gene/mrna -> italic.
-type: step flow signal activate inhibit bind modify transport indirect line.  evidence: direct|indirect|hypothesis."""
+type: step flow phospho produce signal activate inhibit bind modify transport indirect line; edge "legend" = own legend text for its type.
+Auto layout: omit panel x/y/w/h and node cx/cy -> placed by the container's layout (row|col|grid; node col,row are panel-relative),
+legend without x/y goes below the content in columns, texts without x/y become footnotes; the canvas grows so nothing is clipped.  evidence: direct|indirect|hypothesis."""
 import csv, hashlib, json, os, re, sys
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 EDGE = {"activate": ("", "tri", "#1B7837"), "inhibit": ("", "bar", "#B2182B"), "bind": ("", "dot", "#555555"),
         "modify": ("", "open", "#7B3294"), "transport": ("7,4", "tri", "#2166AC"), "indirect": ("2,4", "tri", "#777777"),
-        "flow": ("", "tri", "#2166AC"), "signal": ("5,3", "tri", "#E08214"), "step": ("", "tri", "#333333"), "line": ("", "none", "#333333")}
-ELAB = {"step": "next step (order)", "flow": "material / sample flow", "signal": "signal / secreted factor",
+        "flow": ("", "tri", "#2166AC"), "phospho": ("", "tri", "#7B3294"), "produce": ("", "open", "#2166AC"), "signal": ("5,3", "tri", "#E08214"), "step": ("", "tri", "#333333"), "line": ("", "none", "#333333")}
+ELAB = {"step": "next step (order)", "flow": "material / sample flow", "phospho": "phosphotransfer (~P)", "produce": "synthesis / expression", "signal": "signal / secreted factor",
         "activate": "activation / promotes", "inhibit": "inhibition", "bind": "binding / complex", "modify": "modification (+P, +Ub)",
         "transport": "translocation / secretion", "indirect": "indirect effect", "line": "association (no direction)"}
 EVID = {"indirect": "2,4", "hypothesis": "9,4,2,4"}
@@ -90,10 +92,116 @@ def colorscale(cs, base, warn):
     return rows, br, cols, labs, {"file": cs["csv"], "sha256_16": sha, "value_column": cs["value"], "key_column": cs.get("key"),
                                   "breaks": br, "bins": [{"label": l, "color": c} for l, c in zip(labs, cols)]}
 
+M_ = 20  # canvas margin
+TF = 1.0  # text scale, raised by build until the smallest text meets canvas.min_font_pt at canvas.width_mm
+
+def autolayout(sp, warn):
+    """Fill in missing geometry. Panels without x/y and nodes without cx/cy are placed by their container's layout:
+    row | col | grid (child col,row, or row-major with cols). Containers size to their content, then stretch to fill."""
+    cv, PT, nodes = sp.setdefault("canvas", {}), {p["id"]: p for p in sp.get("panels", [])}, sp.get("nodes", [])
+    has = lambda o, ks: all(k in o for k in ks)  # noqa: E731
+    free = lambda n: "cx" not in n and not ("col" in n and "grid" in cv)  # noqa: E731
+    kids = {}
+    for k, p in enumerate(sp.get("panels", [])):
+        if not has(p, ("x", "y")):
+            kids.setdefault(p.get("parent") if p.get("parent") in PT else "", []).append((p.get("order", k), "p", p))
+    for k, n in enumerate(nodes):
+        if free(n):
+            fs = float(n.get("fs", 14)) * TF
+            if "w" not in n:
+                n["w"] = int(min(140, max(84, max([tw(l, fs, n.get("bold")) for l in str(n.get("label", "")).split("\n")] or [0]) + 28)))
+            n.setdefault("h", int(max(42, len(wrap(n.get("label", ""), n["w"] - 12, fs)) * fs * 1.2 + 18)))
+            kids.setdefault(n.get("comp") if n.get("comp") in PT else "", []).append((n.get("order", 1000 + k), "n", n))
+    lg = sp.get("legend")
+    if lg is not None and not has(lg, ("x", "y")):
+        lg["_auto"] = True
+    if not kids:
+        return
+    def depth(i, d=0):
+        return d if PT[i].get("parent") not in PT or d > 9 else depth(PT[i]["parent"], d + 1)
+    for i, p in PT.items():
+        if not has(p, ("x", "y")) and depth(i):
+            p.setdefault("fs", 13.5)
+            p.setdefault("fill", ["#F7F7F7", "#FFFFFF", "#EFEFEF"][depth(i) % 3])
+    th = lambda c: (float(c.get("fs", 17)) + 14) * TF if c and c.get("title") else 0  # noqa: E731
+    nat = {}
+    def size(i):
+        c = PT.get(i)
+        ks = [(t, x) for _, t, x in sorted(kids.get(i, []), key=lambda z: z[0])]
+        lay = (c or {}).get("layout") or (cv.get("layout", "row") if c is None else "grid" if any("row" in x for _, x in ks)
+                                          else "col" if all(t == "p" for t, _ in ks) and len(ks) > 1 else "row" if len(ks) <= 4 else "grid")
+        nc = int((c or {}).get("cols") or max(1, int(len(ks) ** 0.5 + 0.999)))
+        cell = [(0, k) if lay == "col" else (x.get("col", k % nc), x.get("row", k // nc)) if lay == "grid" else (k, 0) for k, (_, x) in enumerate(ks)]
+        sz = [size(x["id"]) if t == "p" else (x["w"], x["h"]) for t, x in ks]
+        gx = (c or cv).get("gap", 40)
+        gy = (c or cv).get("vgap", gx - 2)
+        cw, rh = {}, {}
+        for (a_, b_), (w, h) in zip(cell, sz):
+            cw[a_], rh[b_] = max(cw.get(a_, 0), w), max(rh.get(b_, 0), h)
+        pad = 14 if c else 0
+        iw = sum(cw.values()) + gx * max(0, len(cw) - 1)
+        ih = sum(rh.values()) + gy * max(0, len(rh) - 1)
+        w = max(iw + 2 * pad, (tw(str(c.get("title", "")), float(c.get("fs", 17)) * TF, True) + 2 * pad + 10) if c else 0, 100 if c else 0)
+        h = (th(c) + ih + 2 * pad) if ks else max(th(c) + 30, 60)
+        nat[i] = (ks, cell, cw, rh, gx, gy, pad)
+        if c is not None:
+            if c.get("w", w) < w or c.get("h", h) < h:
+                warn.append("NOTE panel %s: given w/h is smaller than its content; enlarged to %dx%d" % (i, w, h))
+            w, h = max(w, c.get("w", 0)), max(h, c.get("h", 0))
+        return w, h
+    def place(i, x, y, w, h):
+        ks, cell, cw, rh, gx, gy, pad = nat[i]
+        c = PT.get(i)
+        ix, iy, iw, ih = x + pad, y + th(c) + pad, w - 2 * pad, h - th(c) - 2 * pad
+        sw, sh = sum(cw.values()) or 1.0, sum(rh.values()) or 1.0
+        fh = max(1.0, (ih - gy * max(0, len(rh) - 1)) / float(sh))
+        free_w, wide = iw - gx * max(0, len(cw) - 1), {}
+        while True:  # equal column widths where content allows: grids line up and a relabel does not move other columns
+            share = (free_w - sum(cw[k] for k in wide)) / float(max(1, len(cw) - len(wide)))
+            more = {k for k in cw if k not in wide and cw[k] > share}
+            if not more:
+                break
+            wide.update({k: 1 for k in more})
+        cw = {k: (v if k in wide else max(v, share)) for k, v in cw.items()}
+        rh = {k: v * fh for k, v in rh.items()}
+        cx0 = {k: ix + sum(cw[j] + gx for j in cw if j < k) for k in cw}
+        cy0 = {k: iy + sum(rh[j] + gy for j in rh if j < k) for k in rh}
+        for (t, o), (a_, b_) in zip(ks, cell):
+            if t == "p":
+                o["x"], o["y"], o["w"], o["h"] = round(cx0[a_], 1), round(cy0[b_], 1), round(cw[a_], 1), round(rh[b_], 1)
+                place(o["id"], o["x"], o["y"], o["w"], o["h"])
+            else:
+                o["cx"], o["cy"] = round(cx0[a_] + cw[a_] / 2.0, 1), round(cy0[b_] + rh[b_] / 2.0, 1)
+    for i in [k for k in kids if k in PT and has(PT[k], ("x", "y"))]:  # explicit containers: lay out their children inside
+        w, h = size(i)
+        PT[i].setdefault("w", w), PT[i].setdefault("h", h)
+        place(i, PT[i]["x"], PT[i]["y"], PT[i]["w"], PT[i]["h"])
+    if "" in kids:
+        w, h = size("")
+        top = M_ + (44 * TF if cv.get("title") else 0)
+        cv["w"] = int(max(cv.get("w", 0), w + 2 * M_, tw(str(cv.get("title", "")), cv.get("title_fs", 22) * TF, True) + 2 * M_) + 0.999)
+        place("", M_, top, cv["w"] - 2 * M_, h)
+
 def build(a):
-    sp, out = json.load(open(a[0], encoding="utf-8")), a[1]
-    cv, warn, marks, N, P = sp.get("canvas", {}), [], {}, {}, {}
-    W, H, g = cv.get("w", 1200), cv.get("h", 800), cv.get("grid", {})
+    """Build; when canvas.width_mm is set, scale all text until the smallest is >= canvas.min_font_pt (default 6.5 pt)."""
+    global TF
+    raw = open(a[0], encoding="utf-8").read()
+    cv0 = json.loads(raw).get("canvas", {})
+    TF, goal = float(cv0.get("font_scale", 1.0)), float(cv0.get("min_font_pt", 6.5))
+    for _ in range(6):
+        W, mf, rerun = _build(json.loads(raw), a, False)
+        pt = mf * cv0["width_mm"] / float(W) / 0.3528 if cv0.get("width_mm") else goal
+        if pt >= goal - 0.05 or TF >= 2.5:
+            break
+        TF = min(2.5, TF * (goal / pt) ** 1.6 * 1.01)
+    return _build(json.loads(raw), a, True)[2]
+
+def _build(sp, a, emit):
+    out = a[1]
+    cv, warn, marks, N, P, FS = sp.get("canvas", {}), [], {}, {}, {}, [12.0 * TF]
+    autolayout(sp, warn)
+    cv = sp["canvas"]
+    W, H, g = cv.get("w") or 0, cv.get("h", 0), cv.get("grid", {})
     L = {k: [] for k in ("panels", "edges", "nodes", "data", "text", "legend")}
     cm = {"entities": [], "relations": [], "compartments": [], "legend": [], "data_encoding": None, "warnings": warn}
     def src(o, kind):
@@ -110,7 +218,9 @@ def build(a):
         L["panels"].append('<rect id="%s" x="%s" y="%s" width="%s" height="%s" rx="%s" fill="%s" stroke="%s" stroke-width="1.2" data-src="%s"/>' % (
             p["id"], p["x"], p["y"], p["w"], p["h"], 3 if thin else 8, p.get("fill", "#F2D7B6" if thin else "#F7F7F7"), p.get("stroke", "#BBBBBB"), q(s)))
         if p.get("title"):
-            L["text"].append(txt(p["id"] + "-title", p["x"] + 10, p["y"] + (p["h"] / 2.0 + 4.5 if thin else 24), [p["title"]], p.get("fs", 12.5 if thin else 17), {"bold": 1}, s, "start"))
+            pf = float(p.get("fs", 12.5 if thin else 17)) * TF
+            L["text"].append(txt(p["id"] + "-title", p["x"] + 10, p["y"] + (p["h"] / 2.0 + pf * 0.36 if thin else pf + 7 * TF), [p["title"]], pf, {"bold": 1}, s, "start")
+                             .replace("<text ", '<text paint-order="stroke" stroke="%s" stroke-width="5" stroke-linejoin="round" ' % p.get("fill", "#F2D7B6" if thin else "#F7F7F7"), 1))
         else:
             warn.append("panel %s has no title: every group / compartment / sub-figure must be named on the figure" % p["id"])
     PT = {p["id"]: p for p in sp.get("panels", [])}
@@ -135,7 +245,7 @@ def build(a):
     cm["data_encoding"], nodata = enc and dict(enc, nodes=[]), False
     for n in sp.get("nodes", []):
         n.setdefault("w", 150), n.setdefault("h", 54)
-        if "col" in n:
+        if "col" in n and "cx" not in n:
             n["cx"], n["cy"] = g.get("x0", 120) + n["col"] * g.get("dx", 200), g.get("y0", 120) + n["row"] * g.get("dy", 110)
         N[n["id"]], s, sh, kd = n, src(n, "node"), n.get("shape", "rect"), n.get("kind", "")
         n.setdefault("italic", kd in ("gene", "mrna"))
@@ -183,18 +293,19 @@ def build(a):
         L["nodes"].append('<ellipse %s cx="%s" cy="%s" rx="%s" ry="%s"/>' % (base, n["cx"], n["cy"], w / 2.0, h / 2.0) if sh in ("ellipse", "circle") else
                           '<polygon %s points="%s,%s %s,%s %s,%s %s,%s"/>' % (base, n["cx"], y, x + w, n["cy"], n["cx"], y + h, x, n["cy"]) if sh == "diamond" else
                           '<rect %s x="%s" y="%s" width="%s" height="%s" rx="%s"/>' % (base, x, y, w, h, {"round": 14, "band": 0}.get(sh, 4)))
-        fs, pad = float(n.get("fs", 14)), (0.72 if sh in ("ellipse", "circle", "diamond") else 1.0)
+        fs, pad = float(n.get("fs", 14)) * TF, (0.72 if sh in ("ellipse", "circle", "diamond") else 1.0)
         lines = wrap(n.get("label", ""), w * pad - 12, fs, n.get("bold"))
-        while fs > 9 and (len(lines) * fs * 1.2 > h * pad - 4 or max(tw(l, fs) for l in lines) > w * pad - 8):
+        while fs > 9 * TF and (len(lines) * fs * 1.2 > h * pad - 4 or max(tw(l, fs) for l in lines) > w * pad - 8):
             fs -= 0.5
             lines = wrap(n.get("label", ""), w * pad - 12, fs, n.get("bold"))
         if len(lines) * fs * 1.2 > h * pad + 2 or max(tw(l, fs) for l in lines) > w * pad:
             warn.append("label overflows node %s even at 9px: enlarge w/h or shorten the label" % n["id"])
         o = dict(n, color=n.get("color", "#FFFFFF" if lum(fill) < 0.18 else "#111111"))
+        FS.append(fs)
         L["nodes"].append(txt(n["id"] + "-label", n["cx"], n["cy"] - (len(lines) - 1) * fs * 0.6 + fs * 0.35, lines, fs, o, s))
         cm["entities"].append({"id": n["id"], "label": n.get("label", ""), "kind": kd, "compartment": n.get("comp", ""), "italic": n["italic"],
                                "fill": fill, "data_value": dv, "aliases": n.get("aliases", []), "xref": n.get("xref", ""), "src": s})
-    lg, used, segs, seen, LB = sp.get("legend"), [], [], {}, []
+    lg, used, segs, seen, LB, ELAB_, LBOX = sp.get("legend"), [], [], {}, [], dict(ELAB), []
     PN = {i: {"cx": (b[0] + b[2]) / 2.0, "cy": (b[1] + b[3]) / 2.0, "w": b[2] - b[0], "h": b[3] - b[1], "label": PT[i].get("title", i)} for i, b in P.items()}
     num = lambda n: re.match(r"\s*(\d+)[\s.)]", str((n or {}).get("label", "")) + " ")  # noqa: E731
     for e in sp.get("edges", []):
@@ -202,6 +313,8 @@ def build(a):
         dash, head, col = EDGE.get(t, EDGE["step"])
         dash, col, s = EVID.get(ev, dash), e.get("color", col), src(e, "edge")
         used += [("edge", t)] + ([("evidence", ev)] if ev in EVID else [])
+        if e.get("legend"):
+            ELAB_[t] = e["legend"]
         ends = [N.get(e[k]) or PN.get(e[k]) if isinstance(e[k], str) else None for k in ("from", "to")]
         if any(isinstance(e[k], str) and not ends[i] for i, k in enumerate(("from", "to"))):
             warn.append("edge %s refers to an unknown node/panel id" % e.get("id"))
@@ -216,7 +329,12 @@ def build(a):
             warn.append("edges %s and %s draw over each other (same node pair): give one a via route or merge them" % (seen[pair], e["id"]))
         seen[pair] = e["id"]
         pts = [(n["cx"], n["cy"]) if n else tuple(e[k]) for n, k in zip(ends, ("from", "to"))]
-        pts[1:1] = [tuple(v) for v in e.get("via", [])] or ([(pts[1][0], pts[0][1]) if e["elbow"] == "hv" else (pts[0][0], pts[1][1])] if e.get("elbow") else [])
+        hit = lambda ps: [k for k, n in N.items() if all(n is not x for x in ends) and any(abs(x1 + (x2 - x1) * f / 20.0 - n["cx"]) < n["w"] / 2.0 - 3 and  # noqa: E731
+                                                                                     abs(y1 + (y2 - y1) * f / 20.0 - n["cy"]) < n["h"] / 2.0 - 3 for (x1, y1), (x2, y2) in zip(ps, ps[1:]) for f in range(1, 20))]
+        el = e.get("elbow")
+        if not (e.get("via") or el) and hit(pts) and all(ends):  # auto-route: try an L-shaped connector that misses the other nodes
+            el = next((k for k in ("vh", "hv") if not hit([pts[0], (pts[1][0], pts[0][1]) if k == "hv" else (pts[0][0], pts[1][1]), pts[1]])), None)
+        pts[1:1] = [tuple(v) for v in e.get("via", [])] or ([(pts[1][0], pts[0][1]) if el == "hv" else (pts[0][0], pts[1][1])] if el else [])
         warn += ["edge %s: via point %s lies inside node %s (move it outside)" % (e.get("id"), v, k) for v in e.get("via", []) for k, n in N.items() if abs(v[0] - n["cx"]) < n["w"] / 2.0 and abs(v[1] - n["cy"]) < n["h"] / 2.0]
         pts[0] = clip(ends[0], *pts[1]) if ends[0] else pts[0]
         pts[-1] = clip(ends[1], *pts[-2]) if ends[1] else pts[-1]
@@ -230,67 +348,111 @@ def build(a):
         lab = lambda i: (ends[i] or {}).get("label", str(e[("from", "to")[i]]))  # noqa: E731
         cm["relations"].append({"id": e["id"], "from": lab(0), "to": lab(1), "type": t, "evidence": ev, "label": e.get("label", ""), "src": s})
         if e.get("label"):
-            k = len(pts) // 2
-            mx, my, lw = (pts[k - 1][0] + pts[k][0]) / 2.0, (pts[k - 1][1] + pts[k][1]) / 2.0, tw(e["label"], 12)
-            vert = abs(pts[k][1] - pts[k - 1][1]) > abs(pts[k][0] - pts[k - 1][0])
-            lx, ly, anc = (mx + 7, my + 4, "start") if vert else (mx, my - 7, "middle")
-            bx = lx - 2 - (0 if vert else lw / 2)
-            warn += ["label of edge %s (%r) is hidden under node %s: shorten it or move nodes" % (e["id"], e["label"], k) for k, n in N.items()
-                     if bx < n["cx"] + n["w"] / 2.0 and bx + lw + 4 > n["cx"] - n["w"] / 2.0 and ly - 13 < n["cy"] + n["h"] / 2.0 and ly + 3 > n["cy"] - n["h"] / 2.0]
-            LB.append('<rect id="%s-labelbg" x="%.1f" y="%.1f" width="%.1f" height="16" fill="#FFFFFF" opacity="0.85"/>' % (e["id"], bx, ly - 13, lw + 4))
-            LB.append(txt(e["id"] + "-label", lx, ly, [e["label"]], 12, e, s, anc, col))
+            fl = 12 * TF
+            lw, k0 = tw(e["label"], fl), len(pts) // 2
+            def lpos(k, f, side):
+                mx, my = pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * f, pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * f
+                vert = abs(pts[k][1] - pts[k - 1][1]) > abs(pts[k][0] - pts[k - 1][0])
+                lx, ly, anc = ((mx + 7, my + 4, "start") if side else (mx - 7, my + 4, "end")) if vert else (mx, my - 7 if side else my + fl + 6, "middle")
+                bx = lx - 2 - (0 if anc == "start" else lw if anc == "end" else lw / 2)
+                bad = [j for j, n in N.items() if bx < n["cx"] + n["w"] / 2.0 and bx + lw + 4 > n["cx"] - n["w"] / 2.0 and ly - fl - 1 < n["cy"] + n["h"] / 2.0 and ly + 3 > n["cy"] - n["h"] / 2.0]
+                bad += ["label of " + o for o, b in LBOX if bx < b[2] and bx + lw + 4 > b[0] and ly - fl - 1 < b[3] and ly + 3 > b[1]]
+                return lx, ly, anc, bx, bad
+            cands = [lpos(k, f, sd) for k in sorted(range(1, len(pts)), key=lambda j: abs(j - k0)) for f in (0.5, 0.35, 0.65) for sd in (1, 0)]
+            lx, ly, anc, bx, bad = next((c for c in cands if not c[4]), cands[0])
+            warn += ["label of edge %s (%r) is hidden under %s: shorten it or move nodes" % (e["id"], e["label"], b) for b in bad]
+            LBOX.append((e["id"], (bx, ly - fl - 1, bx + lw + 4, ly + 3)))
+            LB.append('<rect id="%s-labelbg" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#FFFFFF" opacity="0.85"/>' % (e["id"], bx, ly - fl - 1, lw + 4, fl + 4))
+            LB.append(txt(e["id"] + "-label", lx, ly, [e["label"]], fl, e, s, anc, col))
     cr = lambda a, b: all(((b[1] - a[1]) * (b[4] - a[2]) - (b[2] - a[2]) * (b[3] - a[1])) * ((b[1] - a[3]) * (b[4] - a[4]) - (b[2] - a[4]) * (b[3] - a[3])) < 0 for a, b in ((a, b), (b, a)))  # noqa: E731
     warn += ["edges %s and %s cross each other: move nodes or add via so connector lines do not cross" % pr for pr in sorted({(a[0], b[0]) for i, a in enumerate(segs) for b in segs[i + 1:] if a[0] != b[0] and not (a[5] & b[5]) and cr(a, b)})]
     L["edges"] += LB  # labels after all lines, so no later edge is drawn over a label
-    for t in sp.get("texts", []):
-        lines = wrap(t["text"], t["w"], t.get("fs", 14), t.get("bold")) if t.get("w") else str(t["text"]).split("\n")
-        L["text"].append(txt(t["id"], t["x"], t["y"], lines, t.get("fs", 14), t, src(t, "text"), t.get("anchor", "start")))
     fills = sorted({n.get("fill") for n in N.values() if n.get("fill") and n.get("fill") not in cols and n.get("fill").upper() != "#FFFFFF"})
+    bot = max([b[3] for b in P.values()] + [n["cy"] + n["h"] / 2.0 for n in N.values()] + [40])
+    rgt = max([b[2] for b in P.values()] + [n["cx"] + n["w"] / 2.0 for n in N.values()] + [W - M_, tw(str(cv.get("title", "")), cv.get("title_fs", 22) * TF, True) + M_])
     if lg:
         given = {(("edge", it["edge"]) if it.get("edge") else ("evidence", it["evidence"]) if it.get("evidence") else ("fill", it.get("fill", "").upper())): it for it in lg.get("items", [])}
         have, uk = set(given), [u for u in EDGE if ("edge", u) in used] + [u for u in EVID if ("evidence", u) in used]
-        items = [given.get((k, v)) or {k: v, "label": ELAB.get(v, v) if k == "edge" else v + " evidence"} for k in ("edge", "evidence") for v in uk if (k, v) in used]
+        items = [given.get((k, v)) or {k: v, "label": ELAB_.get(v, v) if k == "edge" else v + " evidence"} for k in ("edge", "evidence") for v in uk if (k, v) in used]
         warn += ["legend lists %s %s that is not used in the figure" % h for h in have if h[0] != "fill" and h not in set(used)]
         warn += ["fill %s used on nodes but has no legend item (say what it encodes)" % f for f in fills if ("fill", f.upper()) not in have]
+        nblk = len(items)
         if enc:
             items += [{"head": sc.get("title", sc.get("value") or sc.get("column"))}] + [dict({"fill": c, "label": l}, **({"cat": l} if br is None else {})) for l, c in zip(labs, cols)] + ([{"fill": "#FFFFFF", "label": "no value in " + os.path.basename(sc["csv"])}] if nodata else [])
         items += [it for h, it in given.items() if h[0] == "fill"]  # own fill items last: adding one later keeps earlier ids stable
-        y = lg["y"] + (22 if lg.get("title") else 4)
+        if lg.get("_auto"):
+            lg["x"], lg["y"] = M_, bot + 16
+        fl, rh_ = 12 * TF, 21 * TF
+        colw = 44 + max([tw(str(it.get("label", it.get("head", ""))), fl, bool(it.get("head"))) for it in items] or [0]) + 30
+        ncol = int(lg.get("cols") or (max(1, min(len(items), int((max(W, rgt + M_) - lg["x"] - M_ + 30) // colw))) if lg.get("_auto") else 1))
+        blocks = [items[:nblk], items[nblk:]] if enc and nblk else [items]
+        per = max(-(-len(items) // ncol), max(len(b) for b in blocks) if ncol >= len(blocks) else 0)
+        slots, k = [], 0
+        for b in blocks:
+            if k % per and k % per + len(b) > per and len(b) <= per:
+                k += per - k % per
+            slots += list(range(k, k + len(b)))
+            k += len(b)
+        y0 = lg["y"] + (22 * TF if lg.get("title") else 4)
         if lg.get("title"):
-            L["legend"].append(txt("legend-title", lg["x"], lg["y"] + 12, [lg["title"]], 13, {"bold": 1}, lg.get("src", ""), "start"))
-        for k, it in enumerate(items):
+            L["legend"].append(txt("legend-title", lg["x"], lg["y"] + 12 * TF, [lg["title"]], 13 * TF, {"bold": 1}, lg.get("src", ""), "start"))
+        for k, (it, sl) in enumerate(zip(items, slots)):
+            x, y = lg["x"] + (sl // per) * colw, y0 + (sl % per) * rh_
             i = "legend-" + next(p + re.sub(r"[^a-z0-9]+", "", str(it[k]).lower()) for k, p in (("cat", "cat-"), ("edge", "edge-"), ("evidence", "ev-"), ("fill", "fill-"), ("head", "head")) if it.get(k))
             if it.get("head"):
-                L["legend"].append(txt(i, lg["x"], y + 15, [it["head"]], 12, {"bold": 1}, sc.get("src", sc["csv"]), "start"))
-                y += 24
+                L["legend"].append(txt(i, x, y + 11 * TF, [it["head"]], fl, {"bold": 1}, sc.get("src", sc["csv"]), "start"))
                 continue
             if it.get("edge") or it.get("evidence"):
                 dash, head, col = EDGE[it["edge"]] if it.get("edge") else (EVID[it["evidence"]], "none", "#555555")
                 col = it.get("color", col)
-                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="2"%s%s/>' % (i, lg["x"], y + 6, lg["x"] + 34, y + 6, col,
+                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="2"%s%s/>' % (i, x, y + 6 * TF, x + 34, y + 6 * TF, col,
                                    ' stroke-dasharray="%s"' % dash if dash else "", ' marker-end="url(#%s)"' % mk(head, col) if head != "none" else ""))
             else:
-                L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="30" height="13" fill="%s" stroke="#555555"/>' % (i, lg["x"], y, it["fill"]))
-            L["legend"].append(txt(i, lg["x"] + 44, y + 11, [it["label"]], 12, {}, it.get("src", "legend"), "start"))
+                L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="30" height="%.1f" fill="%s" stroke="#555555"/>' % (i, x, y, 13 * TF, it["fill"]))
+            L["legend"].append(txt(i, x + 44, y + 11 * TF, [it["label"]], fl, {}, it.get("src", "legend"), "start"))
             cm["legend"].append(it)
-            y += 20
-        lb = (lg["x"] - 4, lg["y"] - 4, lg["x"] + 44 + max([tw(str(it.get("label", it.get("head", ""))), 12) for it in items] or [0]) + 4, y + 2)
+        nc_ = (max(slots) // per + 1) if slots else 1
+        lb = (lg["x"] - 4, lg["y"] - 4, lg["x"] + (nc_ - 1) * colw + colw - 26, y0 + min(per, max(slots or [0]) + 1) * rh_ + 2)
         warn += ["edge %s crosses the legend box: re-route it (via) or move the legend" % e for e in sorted({s[0] for s in segs if any(inside(s[1] + (s[3] - s[1]) * f / 30.0, s[2] + (s[4] - s[2]) * f / 30.0, lb) for f in range(31))})]
-        warn += ["legend runs past the canvas (right edge %.0f > w %s): widen canvas.w or move the legend" % (lb[2], W)] if lb[2] > W or y > H else []
         warn += ["node %s overlaps the legend box" % k for k, n in N.items() if n["cx"] + n["w"] / 2.0 > lb[0] and n["cx"] - n["w"] / 2.0 < lb[2] and n["cy"] + n["h"] / 2.0 > lb[1] and n["cy"] - n["h"] / 2.0 < lb[3]]
+        bot, rgt = max(bot, lb[3]), max(rgt, lb[2])
     elif sp.get("edges"):
-        warn.append("no legend: add legend{x,y} (items are auto-filled from the edge types, evidence styles and colour scale used)")
+        warn.append("no legend: add legend{} (placed below the figure; items are auto-filled from the edge types, evidence styles and colour scale used)")
+    for t in sp.get("texts", []):
+        fs = float(t.get("fs", 14)) * TF
+        FS.append(fs)
+        if "x" not in t or "y" not in t:  # footnote: below figure and legend, wrapped to the canvas width
+            t.setdefault("w", max(W, rgt + M_) - 2 * M_)
+            t["x"], t["y"] = M_, bot + 12 + fs
+        lines = wrap(t["text"], t["w"], fs, t.get("bold")) if t.get("w") else str(t["text"]).split("\n")
+        L["text"].append(txt(t["id"], t["x"], t["y"], lines, fs, t, src(t, "text"), t.get("anchor", "start")))
+        bot = max(bot, t["y"] + (len(lines) - 1) * fs * 1.2 + 5)
+        rgt = max(rgt, t["x"] + (max(tw(l, fs) for l in lines) if t.get("anchor", "start") == "start" else 0))
+    W0, H0 = W, H
+    W, H = int(max(W, rgt + M_)), int(max(H if "h" in cv else 0, bot + M_))
+    if W > W0 + 1 and "w" in cv or H > H0 + 1 and "h" in cv:
+        warn.append("NOTE canvas grown from %sx%s to %sx%s so nothing is clipped (no action needed)" % (W0, H0, W, H))
     if cv.get("title"):
-        L["text"].append(txt("figure-title", W / 2.0, 34, [cv["title"]], cv.get("title_fs", 22), {"bold": 1}, cv.get("src", ""), "middle"))
+        L["text"].append(txt("figure-title", W / 2.0, 34 * TF, [cv["title"]], cv.get("title_fs", 22) * TF, {"bold": 1}, cv.get("src", ""), "middle"))
     wa, ha = ("%smm" % cv["width_mm"], "%.2fmm" % (cv["width_mm"] * H / float(W))) if cv.get("width_mm") else (W, H)  # physical size for journals
     body = "\n".join('<g id="layer-%s">\n%s\n</g>' % (k, "\n".join(v)) for k, v in L.items())
     open(out, "w", encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="%s" height="%s" viewBox="0 0 %s %s" font-family="%s">\n<title>%s</title>\n<defs>%s</defs>\n<rect id="background" width="100%%" height="100%%" fill="#FFFFFF"/>\n%s\n</svg>\n' % (
         wa, ha, W, H, q(cv.get("font", FONT)), escape(cv.get("title", "figure")), "".join(marks.values()), body))
     cm["spec"], cm["spec_sha256_16"] = a[0], hashlib.sha256(open(a[0], "rb").read()).hexdigest()[:16]
     cmp_ = os.path.splitext(out)[0] + "_content_map.json"
+    pt = ("; canvas %dx%d px = %s mm wide, smallest text %.1f px = %.1f pt" % (W, H, cv["width_mm"], min(FS), min(FS) * cv["width_mm"] / float(W) / 0.3528)
+          if cv.get("width_mm") else "; canvas %dx%d px, smallest text %.1f px (set canvas.width_mm to get pt)" % (W, H, min(FS)))
+    if TF > 1.01:
+        pt += "; all text scaled x%.2f to meet min_font_pt %s" % (TF, cv.get("min_font_pt", 6.5))
+        warn += ["figure is dense for %s mm: text scaled x%.2f; consider fewer nodes per row or splitting a sub-figure" % (cv.get("width_mm"), TF)] if TF > 1.8 else []
+    cm["export_geometry"] = {"canvas_px": [W, H], "width_mm": cv.get("width_mm"), "min_font_px": round(min(FS), 2), "text_scale": round(TF, 3),
+                             "min_font_pt": round(min(FS) * cv["width_mm"] / float(W) / 0.3528, 2) if cv.get("width_mm") else None}
     json.dump(cm, open(cmp_, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    print("\n".join([("NOTE: " + w[5:]) if w.startswith("NOTE ") else "WARN: " + w for w in warn] or ["no warnings"]) + "\nwrote %s and %s (%d entities, %d relations, %d legend items)" % (
-        out, cmp_, len(cm["entities"]), len(cm["relations"]), len(cm["legend"])))
+    if not emit:
+        return W, min(FS), None
+    print("\n".join([("NOTE: " + w[5:]) if w.startswith("NOTE ") else "WARN: " + w for w in warn] or ["no warnings"]) + "\nwrote %s and %s (%d entities, %d relations, %d legend items%s)" % (
+        out, cmp_, len(cm["entities"]), len(cm["relations"]), len(cm["legend"]), pt))
+    return W, min(FS), None
 
 def edit(a):
     src, out, i, opt = open(a[0], encoding="utf-8").read(), a[1], a[2], a[3:]
@@ -322,7 +484,7 @@ def edit(a):
     print("edited %s -> %s (id %s); run diff to log it" % (a[0], out, i))
 
 def index(path):
-    return {el.get("id"): (el.tag.split("}")[-1], " / ".join(" ".join("".join(s.itertext()).split()) for s in el) or " ".join("".join(el.itertext()).split()) if el.tag.endswith("text") else "",
+    return {el.get("id"): (el.tag.split("}")[-1], " ".join(" ".join(el.itertext()).split()) if el.tag.endswith("text") else "",  # line wrapping is layout, not content
                            {k: v for k, v in el.attrib.items() if k != "id"}) for el in ET.parse(path).getroot().iter() if el.get("id")}
 
 def diff(a):
@@ -332,7 +494,11 @@ def diff(a):
     for k in (k for k in o if k in n and o[k] != n[k]):
         ch += [{"id": k, "change": "text", "before": o[k][1], "after": n[k][1]}] if o[k][1] != n[k][1] else []
         ch += [{"id": k, "change": at, "before": o[k][2].get(at), "after": n[k][2].get(at)} for at in sorted(set(o[k][2]) | set(n[k][2])) if o[k][2].get(at) != n[k][2].get(at)]
-    print(json.dumps({"old": a[0], "new": a[1], "kept_ids": len(set(o) & set(n)), "unchanged_ids": len(set(o) & set(n)) - len({c["id"] for c in ch}), "changes": ch}, ensure_ascii=False, indent=1))
+    geo = {"x", "y", "cx", "cy", "width", "height", "rx", "ry", "points", "x1", "x2", "y1", "y2", "font-size", "text-anchor", "stroke-width"}
+    content = [c for c in ch if c["change"] not in geo]
+    print(json.dumps({"old": a[0], "new": a[1], "kept_ids": len(set(o) & set(n)), "unchanged_ids": len(set(o) & set(n)) - len({c["id"] for c in ch}),
+                      "content_changes": len(content), "layout_only_changes": len(ch) - len(content),
+                      "changed_ids": sorted({c["id"] for c in content}), "changes": content + [c for c in ch if c["change"] in geo]}, ensure_ascii=False, indent=1))
 
 CMDS = {"build": build, "edit": edit, "diff": diff}
 if __name__ == "__main__":

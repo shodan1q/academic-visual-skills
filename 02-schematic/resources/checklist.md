@@ -4,6 +4,8 @@
 
 ## 实体（对照原文和 figure_content_map.json 的 entities）
 - [ ] 图上每个节点都能在原文/数据表找到；图注和结果段点名的实体没有漏画（漏了就写 exceptions）。
+- [ ] `figtext` 列出的原图标签：每个都已画出且写法一致（别名进 aliases），或在 compliance_checks / exceptions 说明为何不画。
+- [ ] 数量、时间、浓度、阈值在摘要/结果/方法/图注里的说法已逐一对过；不一致的已列 exceptions: contradiction 并在图上加脚注。
 - [ ] 没有材料以外的实体、浓度、时间点、数值、单位；表中数值由 `categories.show` 自动上图，不手抄。
 - [ ] 同一实体在两个子图出现时，显示名与 `data` 键一致。
 
@@ -20,7 +22,8 @@
 - [ ] 灰度打印下靠线型/端点仍能区分关系类型（pixcheck 的灰度警告已处理或记录）。
 
 ## 导出与修改
-- [ ] 格式、宽度 mm、dpi 与工单一致；最小字号换算成 pt 后 ≥ 工单要求。
-- [ ] 修改在源上完成（spec_v2 重建；类别颜色改 categories.colors），`edit_diff.json` 只含预期改动；新版本已渲染。
+- [ ] 格式、宽度 mm、dpi 与工单一致；`canvas.min_font_pt` 写了工单要求，build 末行的最小字号 pt 达标（export_geometry 已写进 export_checks）。
+- [ ] 工单要求的结构（分区、子图、图例）都在图上，没有为了排版删掉。
+- [ ] 修改在源上完成（spec_v2 重建；类别颜色改 categories.colors），`edit_diff.json` 的 changed_ids 只含预期改动（layout_only_changes 是自动重排）；新版本已渲染。
 - [ ] 修改请求引入了材料没有的内容时，exceptions 有 `user_request_not_in_source`。
 - [ ] result.json：全部 contract 字段齐全，status 一个词，status_reasons 与 exceptions 一致，没有“生成中”或 `<…>` 模板残留。
