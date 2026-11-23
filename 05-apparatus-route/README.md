@@ -8,9 +8,9 @@
 ## 文件
 | 路径 | 作用 |
 |---|---|
-| `SKILL.md` | 智能体执行说明：≤ 30 次调用的 9 步流程、结构化清单格式、装置/流程/路线三类画图规则、spec 示例、result.json 规则、异常处理 |
+| `SKILL.md` | 智能体执行说明：≤ 25 次调用的 9 步流程（带时间检查点）、结构化清单格式、装置/流程/路线三类画图规则、spec 示例、result.json 规则、异常处理 |
 | `scripts/svgfig.py` | 标准库：`build` 规格 → 分层 SVG（id、data-src、flow/signal/step 等语义边、直角走线 elbow/via、自动换行、图例、`width_mm`、溢出/穿部件/via 点告警、元素来源表）；`edit` 按 id 改文字/属性；`diff` 元素级改动 |
-| `scripts/export_check.py` | 标准库：`tools` 探测渲染器与中文字体；`render` SVG → PNG/PDF（6 种渲染器依次尝试，PDF 字体嵌入检查），写 export_log.jsonl；`check` 核对 result.json 与全部交付物 |
+| `scripts/export_check.py` | 标准库：`init` 写 result.json 骨架并探测渲染器与中文字体；`pdf` 把 PDF 抽成文本落盘并只打印章节/图注地图和命中行；`render` 一次渲染多张 SVG → PNG/PDF（6 种渲染器依次尝试，单个渲染器 ≤ 60 s、整条命令有总预算、超时连同子进程一起结束，PDF 字体嵌入检查），写 export_log.jsonl；`fill` 从磁盘回填空着的 artifacts / export_checks / source_map / change_log / versions；`check` 核对 result.json 与全部交付物 |
 | `resources/checklist.md` | 交付前人工核对清单 |
 | `examples/README.md` | 最小调用示例（示例，合成数据） |
 | `benchmark/EVALUATION.md` | 设计理由、规则与失败形态对照、内部合成测试记录（无正式分数） |
@@ -22,11 +22,14 @@
 ## 调用方式
 ```bash
 export S=/skills/weekly-skill            # 本地测试时另设 CASE_JSON / WORK_DIR / OUT_DIR
-python3 $S/scripts/export_check.py tools
+timeout 60 python3 $S/scripts/export_check.py init                      # 骨架 result.json + 工具探测
+timeout 240 python3 $S/scripts/export_check.py pdf /input/source/paper.pdf --grep "pump|stage|setup"
 python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg
-timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi 300
+timeout 260 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi 300
 python3 $S/scripts/svgfig.py edit /app/output/figure.svg /app/output/figure_v2.svg e-feed2 --set stroke-width=4
-python3 $S/scripts/svgfig.py diff /app/output/figure.svg /app/output/figure_v2.svg
+python3 $S/scripts/svgfig.py diff /app/output/figure.svg /app/output/figure_v2.svg > /app/output/figure_edit_diff.json
+timeout 200 python3 $S/scripts/export_check.py render /app/output/figure_v2.svg
+python3 $S/scripts/export_check.py fill
 python3 $S/scripts/export_check.py check
 ```
 
@@ -46,4 +49,4 @@ python3 $S/scripts/export_check.py check
 - 不判断方案是否合理，只保证图与材料一致、缺口可见。
 
 ## 维护
-版本 lite-1.0（2026-11）。改动脚本后用 examples/README.md 的示例重跑 build → render → check。
+版本 lite-1.1（2026-11）：运行稳定性加固——骨架一条命令写出；PDF 不再整篇打印；渲染有单项与总时限、卡死的渲染器连同子进程结束且本次运行内不再重试；check 只扫字符串内容（嵌套 JSON 的 `}}` 不再误报占位符），渲染器全部失败且已记录时降为警告；两个脚本都不会抛出 traceback。lite-1.0 → 1.1 未改流程、画图规则与交付物格式。改动脚本后用 examples/README.md 的示例重跑 init → build → render → fill → check。

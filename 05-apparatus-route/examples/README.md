@@ -38,11 +38,13 @@ case 文件（示例）：
 
 ## 4. 命令与示意输出
 ```
+$ timeout 60 python3 $S/scripts/export_check.py init                         -> skeleton result.json (case_id, 4 contract fields, status partial) + tools
 $ python3 $S/scripts/svgfig.py build figure_spec.json figure.svg              -> no warnings (11 elements)
-$ timeout 300 python3 $S/scripts/export_check.py render figure.svg           -> rsvg-convert PNG + vector PDF
+$ timeout 260 python3 $S/scripts/export_check.py render figure.svg           -> RENDER OK: png=rsvg-convert pdf=rsvg-convert
 $ python3 $S/scripts/svgfig.py edit figure.svg figure_v2.svg n-p1-label --text "P1\nperistaltic pump\n20 mL/min"
-$ python3 $S/scripts/svgfig.py diff figure.svg figure_v2.svg
+$ python3 $S/scripts/svgfig.py diff figure.svg figure_v2.svg > figure_edit_diff.json
   {"id": "n-p1-label", "change": "text", "before": "P1 / peristaltic / pump", "after": "P1 / peristaltic pump / 20 mL/min"}
+$ python3 $S/scripts/export_check.py fill                                    -> filled: artifacts, export_checks, source_map, change_log, versions
 $ python3 $S/scripts/export_check.py check                                   -> PASS, status=partial
 ```
 `result.json`（示例，节选）：

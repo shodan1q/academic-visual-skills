@@ -1,6 +1,6 @@
 # 交付前自检清单（实验装置图 / 流程图 / 技术路线图）
 
-`python3 $S/scripts/export_check.py check` 得到 PASS 后，再逐条人工核对，结论写进 result.json 的 export_checks / run_notes：
+`python3 $S/scripts/export_check.py fill` 回填、`check` 得到 PASS（最多两轮；改不掉的 FAIL 写进 status_reasons、status partial）后，再逐条人工核对，结论写进 result.json 的 export_checks / run_notes：
 
 ## 部件与连接
 - [ ] ir.md 部件表中每个部件都在图上（名称、数量与材料一致，同类部件分别编号）；图上没有多出的部件。

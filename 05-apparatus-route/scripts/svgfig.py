@@ -18,6 +18,7 @@ HEAD = {"tri": '<path d="M0,0 L10,5 L0,10 z" fill="%s"/>', "open": '<path d="M0,
 REF = {"tri": 9, "open": 9, "bar": 6, "dot": 10}
 FONT = "Arial, Helvetica, 'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', sans-serif"
 q = lambda s: escape(str(s), {'"': "&quot;"})  # noqa: E731
+CTX = ["start"]
 
 def tw(s, fs, bold=False):
     return sum(fs * (1.0 if ord(c) > 0x2E80 else (0.6 if bold else 0.56)) for c in s)
@@ -62,13 +63,17 @@ def build(a):
         marks[k] = '<marker id="%s" viewBox="-1 -1 13 13" refX="%d" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse">%s</marker>' % (k, REF[head], HEAD[head] % col)
         return k
     for p in sp.get("panels", []):
+        CTX[0] = "panel %s" % p.get("id")
         s = src(p, "panel", p.get("title", ""))
         L["panels"].append('<rect id="%s" x="%s" y="%s" width="%s" height="%s" rx="8" fill="%s" stroke="%s" stroke-width="1.2" data-src="%s"/>' % (
             p["id"], p["x"], p["y"], p["w"], p["h"], p.get("fill", "#F7F7F7"), p.get("stroke", "#BBBBBB"), q(s)))
         if p.get("title"):
             L["text"].append(txt(p["id"] + "-title", p["x"] + 12, p["y"] + 24, [p["title"]], p.get("fs", 17), {"bold": 1}, s, "start"))
     for n in sp.get("nodes", []):
+        CTX[0] = "node %s" % n.get("id")
         n.setdefault("w", 150), n.setdefault("h", 54)
+        if "cx" not in n and "col" not in n:
+            raise KeyError("node %s needs cx/cy (or col/row with canvas.grid)" % n.get("id"))
         if "col" in n:
             n["cx"], n["cy"] = g.get("x0", 120) + n["col"] * g.get("dx", 200), g.get("y0", 120) + n["row"] * g.get("dy", 110)
         N[n["id"]], s, sh = n, src(n, "node", n.get("label", "")), n.get("shape", "rect")
@@ -86,6 +91,7 @@ def build(a):
             warn.append("label overflows node %s even at 9px: enlarge w/h or shorten the label" % n["id"])
         L["nodes"].append(txt(n["id"] + "-label", n["cx"], n["cy"] - (len(lines) - 1) * fs * 0.6 + fs * 0.35, lines, fs, n, s))
     for e in sp.get("edges", []):
+        CTX[0] = "edge %s" % e.get("id")
         dash, head, col = EDGE.get(e.get("type", "step"), EDGE["step"])
         col, s = e.get("color", col), src(e, "edge:" + e.get("type", "step"), e.get("label", ""))
         ends = [N.get(e[k]) if isinstance(e[k], str) else None for k in ("from", "to")]
@@ -111,29 +117,34 @@ def build(a):
             L["edges"].append('<rect id="%s-labelbg" x="%.1f" y="%.1f" width="%.1f" height="16" fill="#FFFFFF" opacity="0.85"/>' % (e["id"], lx - 2 - (0 if vert else lw / 2), ly - 13, lw + 4))
             L["edges"].append(txt(e["id"] + "-label", lx, ly, [e["label"]], 12, e, s, anc, col))
     for t in sp.get("texts", []):
+        CTX[0] = "text %s" % t.get("id")
         lines = wrap(t["text"], t["w"], t.get("fs", 14), t.get("bold")) if t.get("w") else str(t["text"]).split("\n")
         L["text"].append(txt(t["id"], t["x"], t["y"], lines, t.get("fs", 14), t, src(t, "text", t["text"]), t.get("anchor", "start")))
     lg = sp.get("legend")
+    CTX[0] = "legend"
     if lg:
         y = lg["y"] + (22 if lg.get("title") else 4)
         if lg.get("title"):
             L["legend"].append(txt("legend-title", lg["x"], lg["y"] + 12, [lg["title"]], 13, {"bold": 1}, lg.get("src", ""), "start"))
-        for k, it in enumerate(lg["items"]):
+        for k, it in enumerate(lg.get("items", [])):
             i = "legend-%d" % k
             if it.get("edge"):
-                dash, head, col = EDGE[it["edge"]]
+                warn.extend([] if it["edge"] in EDGE else ["legend item %d: unknown edge type %r (drawn as step)" % (k, it["edge"])])
+                dash, head, col = EDGE.get(it["edge"], EDGE["step"])
                 col = it.get("color", col)
                 L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="2"%s%s/>' % (i, lg["x"], y + 6, lg["x"] + 34, y + 6, col,
                                    ' stroke-dasharray="%s"' % dash if dash else "", ' marker-end="url(#%s)"' % mk(head, col) if head != "none" else ""))
             else:
-                L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="30" height="13" fill="%s" stroke="#555555"/>' % (i, lg["x"], y, it["fill"]))
-            L["legend"].append(txt(i, lg["x"] + 44, y + 11, [it["label"]], 12, {}, it.get("src", "legend"), "start"))
+                L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="30" height="13" fill="%s" stroke="#555555"/>' % (i, lg["x"], y, it.get("fill", "#DDDDDD")))
+            L["legend"].append(txt(i, lg["x"] + 44, y + 11, [it.get("label", "")], 12, {}, it.get("src", "legend"), "start"))
             y += 20
     elif sp.get("edges") or sp.get("bars"):
         warn.append("no legend: add one item per edge type / fill colour used")
     if cv.get("title"):
         L["text"].append(txt("figure-title", W / 2.0, 34, [cv["title"]], cv.get("title_fs", 22), {"bold": 1}, cv.get("src", ""), "middle"))
     wa, ha = ("%smm" % cv["width_mm"], "%.2fmm" % (cv["width_mm"] * H / float(W))) if cv.get("width_mm") else (W, H)  # physical size for journals
+    if os.path.dirname(os.path.abspath(out)):
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     body = "\n".join('<g id="layer-%s">\n%s\n</g>' % (k, "\n".join(v)) for k, v in L.items())
     open(out, "w", encoding="utf-8").write('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="%s" height="%s" viewBox="0 0 %s %s" font-family="%s">\n<title>%s</title>\n<defs>%s</defs>\n<rect id="background" width="100%%" height="100%%" fill="#FFFFFF"/>\n%s\n</svg>\n' % (
         wa, ha, W, H, q(cv.get("font", FONT)), escape(cv.get("title", "figure")), "".join(marks.values()), body))
@@ -182,4 +193,9 @@ if __name__ == "__main__":
     if len(sys.argv) < 3 or sys.argv[1] not in CMDS:
         print(__doc__)
         sys.exit(2)
-    sys.exit(CMDS[sys.argv[1]](sys.argv[2:]) or 0)
+    try:
+        rc = CMDS[sys.argv[1]](sys.argv[2:]) or 0
+    except Exception as e:  # concise, fixable message instead of a traceback
+        print("FAIL: svgfig %s stopped at %s: %s: %s. Fix that entry (keys: see SKILL.md spec example) and rerun." % (sys.argv[1], CTX[0], type(e).__name__, str(e)[:200]))
+        rc = 1
+    sys.exit(rc)

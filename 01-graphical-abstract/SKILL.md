@@ -20,10 +20,10 @@ description: 依据论文/研究描述、实验记录和源数据（txt/md/pdf/c
    - “只进图注”清单：统计细节、样本量、次要结果、限定条件——放进 `figure_caption.md`，不挤上图。
    - 结论措辞强度与证据一致：材料只说“相关/提示”就不写“证明/导致”。
 5. **写规格 `/app/output/figure_spec.json` 并 build（2–4 次）**：用一小段 python 读源数据生成 `bars` 项（value、err、单位、src=文件:行），再写其余 panels/nodes/edges/texts/legend，`python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg`。所有 WARN（缺 src、溢出、边穿节点、无图例、负值）改到消失或写进 uncertainties。
-6. **数据回读 + 渲染（1–2 次）**：`python3 -c "import xml.etree.ElementTree as E;[print(e.get('id'),e.get('data-value'),e.get('height')) for e in E.parse('/app/output/figure.svg').iter() if e.get('data-value')]"`，逐项与数据文件比对（高度/数值比例应一致），结果写进 data_mapping。然后 `timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi 300` → figure.png + figure.pdf + export_log.jsonl。失败照实记录，不伪造预览。
+6. **数据回读 + 渲染（1–2 次）**：`python3 -c "import xml.etree.ElementTree as E;[print(e.get('id'),e.get('data-value'),e.get('height')) for e in E.parse('/app/output/figure.svg').iter() if e.get('data-value')]"`，逐项与数据文件比对（高度/数值比例应一致），结果写进 data_mapping。然后 `timeout 240 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi 300` → figure.png + figure.pdf + export_log.jsonl。失败照实记录，不伪造预览。
 7. **来源与图注（1–2 次）**：`figure_source_map.md`（元素 id | 图上文字/数值/单位 | 面板 | 来源 文件:位置 | 原文短引 | 人工确认?），以 `figure_elements.tsv` 为底稿；`figure_caption.md`（一句话主旨、四面板读图顺序、图例与单位、误差含义、只进图注的信息）。
 8. **源文件级编辑**：有修改请求就照做；没有就做一次“演示编辑”（如改结论措辞或某面板标题），另存并在 change_log 标“演示，不属于正式图”。优先改 spec（另存 `figure_spec_v2.json`）重建 `figure_v2.svg`；材料自带 SVG 或单个属性用 `svgfig.py edit in.svg out.svg <id> --text "新文字" --set fill=#xxxxxx`（多行用 `\n`）。然后 `svgfig.py diff 旧.svg 新.svg` 写进 change_log，并 render 新版本。
-9. **填 result.json 并自检（2–3 次）**：按“result.json 规则”填写，运行 `python3 $S/scripts/export_check.py check`，FAIL 改到 PASS；再对照 `$S/resources/checklist.md`。
+9. **填 result.json 并自检（2–3 次）**：按“result.json 规则”填写，运行 `timeout 120 python3 $S/scripts/export_check.py check`，FAIL 能改则改，最多 2 轮，改不了的（如本机无渲染器）照实写进 status_reasons 并保持 partial；再对照 `$S/resources/checklist.md`。
 
 ## 版式与编码规则
 - **阅读顺序**：四个 panel 左→右（横版）或 Z 形 2×2，标题带序号“1 问题 / 2 方法 / 3 结果 / 4 结论”（语言随任务）；panel 之间用 `step` 箭头串起主线；视觉焦点给核心结果（最大面板或强调色）。
