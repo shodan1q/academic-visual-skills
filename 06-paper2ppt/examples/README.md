@@ -24,14 +24,14 @@ import json; c = json.load(open("/input/case.json"))
 r = {"case_id": c["case_id"], "status": "partial"}; r.update({k: "pending" for k in c["output_contract"] if k not in r})
 json.dump(r, open("/app/output/result.json", "w"), ensure_ascii=False, indent=1)
 PY
-pdftotext -layout /input/paper.pdf $WORK_DIR/paper.txt            # 3 原文 + 题注页码列表
+python3 $K paper /input/paper.pdf $WORK_DIR                       # 3 paper.txt + 节标题 + 全部题注与页码
 python3 $K inspect /input/target-template.pptx                    # 4 版式与占位符
 # 5 写 storyline.md / plan.md（问题→方法→Table 1→Fig. 2→结论与局限）
-python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png  # 6 原图
+python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png  # 6 原图（去白边；题注打印出来写进 caption）
 python3 $K build $WORK_DIR/spec.json                              # 7 建页（无 WARN）
 python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
 python3 $SKILL_DIR/scripts/check_result.py --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
-python3 $SKILL_DIR/scripts/check_result.py --source $WORK_DIR/paper.txt --template /input/target-template.pptx --slides 6   # 9 自检
+python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template /input/target-template.pptx --min-pt 18 --slides 6   # 9 自检
 ```
 
 `spec.json`（示例节选）：
@@ -42,9 +42,11 @@ python3 $SKILL_DIR/scripts/check_result.py --source $WORK_DIR/paper.txt --templa
   {"layout": "标题和内容", "title": "1 wt% Ce 使 T50 从 285 °C 降到 243 °C",
    "table": [["样品", "T50 (°C)", "X250 (%)"], ["Co3O4", "285", "61.0"], ["1Ce", "243", "92.4"]],
    "caption": "原文 Table 1（n = 3 均值）", "notes": "先看 1Ce 一行，再指出 2Ce 反而变差；被问误差：原文只给均值。"},
-  {"layout": "标题和内容", "title": "1Ce 在 250 °C 下 50 h 不失活", "body": ["XPS：O_ads/O_latt 0.42 → 0.71"],
-   "image": "/app/work/fig2.png", "caption": "原文 Fig. 2", "notes": "氧空位是作者解释，证据强度中等。"}]}
+  {"layout": "标题和内容", "title": "1Ce 在 250 °C 下 50 h 不失活", "body": ["XPS：O_ads/O_latt **0.42 → 0.71**"],
+   "image": "/app/work/fig2.png", "caption": "原文 Fig. 2：250 °C 稳定性，50 h", "source_note": "Paper Fig. 2, Sec. 3, p.2",
+   "notes": "氧空位是作者解释，证据强度中等。"}]}
 ```
+宽图（宽高比 ≥ 1.45）配 body 时 build 打印 `stacked: visual on top (9.0x3.6in), body below`：图满宽在上，要点在下。
 
 ## 3. 示意输出（示例，节选）
 build 打印：

@@ -1,7 +1,7 @@
 # 设计说明与内部自测记录（内部材料）
 
 > 本文件只记录维护者在本机真实做过的事情。所用案例是自己编写的**合成案例**，不是平台正式案例；
-> 没有做"不加载 Skill 的基础 Agent"对照运行，因此这里不给任何增益数字，也不推测正式评测分数。
+> 没有做"不加载 Skill 的基础 Agent"对照运行，因此这里不给任何增益数字，也不推测正式案例上的结果。
 
 ## 1. 为什么是"轻量指令 + 两个标准库脚本"
 - 上一期经验：依赖重型脚本流水线的 Skill 在官方环境里整题失败；以指令为主、脚本只做确定性工作的版本稳定得多。
@@ -57,3 +57,25 @@
 - 没有渲染器 → `pptx_kit.py render` 自动探测、两次尝试、限时，失败写 render.json；status=partial 时 checker 把渲染类问题降为 WARN。
 - 主线覆盖：checker 对"Results / Method"这类话题标题和缺失的页型（问题/方法/结果/结论）给 WARN；figcrop 裁进正文时改用 `pdfimages` 取原始位图（rt06 里 Fig. 3 就是这样取的）。
 - 复测 rt06：8 页，render 出 PDF/PNG，assemble 后 checker PASS（content_map 没写 role 时报 "method 页型未找到" 的 WARN）。
+
+## 版本 1.3：交付物的可读性（内部记录，未做基础 Agent 对照）
+合成案例 r2-06（本机 2026-11-23，LibreOffice 26.2，poppler 26.07）：3 页双栏论文（tectonic 排版），图全是**矢量图**（pdfimages 取不到），
+Fig. 1 是示意图，Table 1 的题注在右栏，Table 2 和引言里有文献 [5][7][9] 的数值，补充材料 Fig. S1–S5 被引用但不提供；4:3 PKU 模板、
+工作单要求正好 10 页、12 分钟、中文、正文 ≥ 18 pt。按 v1.2 与 v1.3 的 SKILL.md 各做一遍，打开 PDF 逐页看。
+
+| 问题（v1.2 的实际产物） | 原因 | v1.3 做法 | v1.3 实测 |
+|---|---|---|---|
+| 结果页的图缩成小图：Fig. 2 两面板图在页上的绘图区只有约 4.9×1.8 in，坐标轴字约 6 pt | figcrop 把页眉空白和整段英文图注一起裁进图片；"图片版式"的占位符 6.0×4.5 in，宽图只能缩小 | figcrop 先 72 dpi 探测去白边，图注不进图片（打印出来写到 `caption`）；宽图（宽高比 ≥ 1.45）配要点时 build 排成上图满宽、下方要点；图在页上 < 55% 页宽时 WARN | Fig. 2 / Fig. 3 在页上 8.8–8.9×3.2 in，坐标轴字约 11 pt |
+| checker 对正确引用的 Table 1 报 FAIL（"论文里没有这个题注"），status=complete 被拦下 | 题注索引只认行首，双栏 `-layout` 文本里右栏题注在行中间 | 题注索引改为行首或 ≥ 3 个空格之后；论文正文提到但没解析到题注只报 WARN，论文完全没提的编号才 FAIL | 同一 deck：v1.2 checker 4 FAIL，v1.3 checker PASS（Fig. S4/S5 报 WARN：补充材料未提供） |
+| 表格 14 pt、等宽列，只占上半页 | 表格字号固定 14，列宽平均分 | 按单元格内容分配列宽，自动取 24→14 pt 中放得下的最大字号；放不下时 WARN 并建议删列/行 | Table 1、Table 2 在页上 24 pt，首列不再挤成两行 |
+| 文字页显得空，或 Agent 自行写 font_size 后字很小 | 只有"溢出就 WARN"，没有"放得下就用模板字号"的规则 | 不写 font_size 时正文继承模板字号；估算放不下时自动降到能放下的最大字号（≥ min_pt），在 placed 行注明 auto-fit | 两栏页 28 pt、方法页 32 pt，无溢出 WARN |
+| 题注列表漏掉右栏的 Table 1；节标题和页码要自己 grep | 一行 python 只匹配行首 | 新命令 `pptx_kit.py paper`：写 paper.txt，列页数、节标题、全部题注+页码（按 bbox 块，双栏安全）、每页位图数 | 5 个题注全部列出，raster=0 提示用 figcrop |
+| 文献值混进本文页没人提醒 | 数字回查只看"论文里有没有这个数" | checker：论文里只在 [n] 旁出现的小数，页上同一行没有 [n]/"报道" 时 WARN | 反例：把 "HCE：CE 99.2% [5]" 删掉 [5] → 报 `s2:99.2` |
+
+v1.3 checker 在同一反例 deck 上还报出：88.8 改成 88.9（FAIL，论文没有这个小数）、引用不存在的 "Fig. 4"（FAIL）。仍查不出的：
+中文页把 Table 2 的内容标成 "Table 1"（题注是英文，词重叠对不上），已写进 README 的限制。
+
+调用次数（按 SKILL.md 操作）：v1.2 约 20 次（含为假 FAIL 回头核对 2–3 次）；v1.3 约 13 次（读输入 1、骨架 1、工具+paper 1、读相关段 1、
+主线+大纲 1、inspect 1、figcrop 1（三张图一条命令）、build 2、render 1、看 PNG 1、记录+assemble+checker 2）。
+回归：rt06 / rt08 / rt09 旧 spec 用 v1.3 kit 重建，keep/replace 与占位符落位不变（差别只在表格字号、auto-fit 与新的小图 WARN），
+v1.2 与 v1.3 checker 在三份 deck 上给出相同的 FAIL 集合。

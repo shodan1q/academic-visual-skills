@@ -77,7 +77,8 @@ def slides_of(deck):
     with zipfile.ZipFile(deck) as zf:
         rd = lambda n: zf.read(n).decode("utf-8") if n in zf.namelist() else ""
         rel = lambda part: {i: os.path.normpath(os.path.join(os.path.dirname(part), t)) for i, t in re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', rd(os.path.dirname(part) + "/_rels/" + os.path.basename(part) + ".rels"))}
-        txt = lambda x: "\n".join("".join(unescape(t) for t in re.findall(r"<a:t>([^<]*)</a:t>", p)) for p in re.findall(r"<a:p(?=[ >]).*?</a:p>", x, re.S))
+        row = lambda m: "<a:p><a:t>%s</a:t></a:p>" % " | ".join("".join(re.findall(r"<a:t>([^<]*)</a:t>", c)) for c in re.findall(r"<a:tc\b.*?</a:tc>", m.group(0), re.S))
+        txt = lambda x: "\n".join("".join(unescape(t) for t in re.findall(r"<a:t>([^<]*)</a:t>", p)) for p in re.findall(r"<a:p(?=[ >]).*?</a:p>", re.sub(r"<a:tr\b.*?</a:tr>", row, x, flags=re.S), re.S))  # table row = one line
         pr, out = rel("ppt/presentation.xml"), []
         for rid in re.findall(r'<p:sldId [^>]*r:id="([^"]+)"', rd("ppt/presentation.xml")):
             part = pr[rid]
@@ -212,13 +213,28 @@ def paper_check(sl, paper, deck_srcs, fails, warns, preserved=()):
         fails.append("numbers on slides that come from the old deck but NOT from the paper (deck error carried over? check and correct to the paper, log it): %s" % ", ".join(only_deck[:15]))
     if unknown:
         warns.append("numbers on slides found in neither paper nor deck (computed? label 'calculated from ...' or remove): %s" % ", ".join(unknown[:15]))
+    # literature values: decimals that the paper only states next to a citation [n] must carry an attribution on the slide
+    CIT = re.compile(r"\[\d+(?:[,\u2013-]\s*\d+)*\]")
+    occ = {}
+    for line in txt.splitlines():
+        for m in NUM.finditer(line):  # cited = a [n] follows within 40 characters (same sentence or same table row)
+            if "." in m.group(0):
+                occ.setdefault(norm(m.group(0)), []).append(bool(CIT.search(line[m.end():m.end() + 40])))
+    lit = []
+    for i, (t, _) in enumerate(sl, 1):
+        for line in t.splitlines():
+            if CIT.search(line) or re.search(r"\bref|文献|报道|reported|et al", line, re.I):
+                continue
+            lit += ["s%d:%s" % (i, x) for x in NUM.findall(line) if "." in x and occ.get(norm(x)) and all(occ[norm(x)])]
+    if lit:
+        warns.append("numbers the paper only gives with a citation [n] (other groups' results?) appear on slides without attribution - add '[n] 报道' or move off this-work pages: %s" % ", ".join(lit[:10]))
     LBL = r"(Fig(?:ure)?\.?|Table|Tab\.|图|表)\s*(S?\d+)"
     kind = lambda k: "T" if k.lower().startswith(("tab", "表")) else "F"
     caps = {}
     for line in txt.splitlines():
-        m = re.match(r"\s*" + LBL + r"\s*[.:|：]", line)
-        if m:
-            caps.setdefault((kind(m.group(1)), m.group(2)), line.strip())
+        for m in re.finditer(r"(?:^|\s{3,})" + LBL + r"\s*[.:|：]", line):  # also right-column captions of 2-column layout text
+            caps.setdefault((kind(m.group(1)), m.group(2)), line[m.start(1):].strip())
+    mentioned = {(kind(m.group(1)), m.group(2)) for m in re.finditer(LBL, txt)}
     words = lambda u: {w.lower() for w in re.findall(r"[A-Za-z]{4,}|[\u4e00-\u9fff]", u)} - {"figure", "table", "with", "from", "that", "this"}
     for i, (t, _) in enumerate(sl, 1):
         for line in t.splitlines():
@@ -226,7 +242,10 @@ def paper_check(sl, paper, deck_srcs, fails, warns, preserved=()):
                 key = (kind(m.group(1)), m.group(2))
                 bucket = warns if i in preserved else fails
                 if caps and key not in caps:
-                    bucket.append("slide %d cites %s but the paper has no caption with that number" % (i, m.group(0)))
+                    if key in mentioned:  # cited in the paper text but caption not parsed (layout) -> advisory only
+                        warns.append("slide %d cites %s: referenced in the paper text but no caption found in paper.txt (supplementary not supplied, or caption not parsed) - confirm by eye and say 'not supplied' where true" % (i, m.group(0)))
+                    else:
+                        bucket.append("slide %d cites %s but the paper never mentions that number (no caption, no in-text reference)" % (i, m.group(0)))
                     continue
                 rest = words(line[m.end():])
                 if len(rest) < 2 or key not in caps:

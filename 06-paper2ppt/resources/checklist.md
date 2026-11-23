@@ -43,3 +43,9 @@
 - [ ] build 的 `placed` 行：正文在面积最大的占位符，出处在 source_note；build.log 的 WARN 已处理或写进 uncertainty
 - [ ] 正文 ≥ 字号下限（checker `--min-pt`）；图片比例误差 ≤ 3%（slide_audit.md）
 - [ ] checker `--paper` 无 FAIL（有旧 deck 时加 `--source`）；slide_audit.md 已交付并在 result.json 里引用
+
+## 1.3 新增（看 PDF 时逐页核对）
+- [ ] 结果页的图占满正文区宽度（build 无 `figure is only ...` WARN），坐标轴字在 PDF 里看得清；图注是页上的可编辑文字，含原文编号和条件
+- [ ] 表格只留支撑主张的列/行，主张所在行加粗；build 无表格放不下的 WARN
+- [ ] 文字页没有半页空白（要点 3–5 条，或配原文图/表）；没为了"好看"自己写小于模板的 font_size
+- [ ] checker 无"[n] 引用旁的数值未标出处"WARN，或已在页上标 "[n] 报道"
