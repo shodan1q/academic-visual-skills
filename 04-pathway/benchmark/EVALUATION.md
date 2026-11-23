@@ -68,3 +68,26 @@
 - gpu 服务器（matplotlib，无 rsvg/cairosvg/magick）：render 用内置 matplotlib 出 PNG+PDF，pixcheck 在 1200 px 重渲染上检查 9 个节点无提示，assemble PASS。
 - 内置渲染与 rsvg 渲染目视对照：区室、膜带、节点、斜体基因名、箭头/T 端/圆点端 marker、虚线 transport、图例都在原位。
 
+
+## 7. 1.3 调整：模型不再算坐标（2026-11）
+**问题来源（同一输入对照）**：合成案例 SIM04-R2-TGFB（人肺成纤维细胞 TGF-β1 通路：配体—两种受体跨膜、SMAD2/3 磷酸化与 SMAD4 成复合物入核、4 个靶基因、SMAD7–SMURF2 负反馈、TRAF6–TAK1–p38 并行支、SARA 间接、SMAD7 抑制核复合物为假设；Table S2 着色；工单 183 mm / 600 dpi / ≥ 6 pt，修改请求：改配体标签 + 并行支分组色）。作者按 1.2 的 SKILL.md 扮演运行时智能体，手写坐标一次成稿：
+| # | 1.2 产物上看到的问题 | 脚本是否发现 |
+|---|---|---|
+| 1 | 画布 1250 px 宽、导出 183 mm：边标签和图例 12 px 只有 **5.0 pt**，低于工单 6 pt | 否（只在 SKILL 里给了换算公式，靠模型自己算） |
+| 2 | “+Ub → degradation”“+P S465/467”标签压在别的边上；“expression”标签离自己的边很远、挨着 p38 的边，读者会配错 | 否（只查标签压节点） |
+| 3 | p38 → *ACTA2* 与 SMAD7 表达边在核内交叉、“enhances”压在转录边上；TGFBR2 → TGFBR1 的磷酸化边画成 V 形折线 | 否 |
+| 4 | 数据中间档 #F7F7F7 与“无数据”白色肉眼不可分，图例两项看起来一样 | 否 |
+| 5 | 所有实体都是同一种矩形，基因/蛋白/复合物只靠斜体区分；膜只是色带 | — |
+| 6 | 修改版若在原 spec 上改标签并重排，diff 会混入大量坐标变化 | — |
+build 只报 1 条 WARN，pixcheck PASS——即检查全过而图有可见缺陷。快速模型手写 17 个节点的坐标时，这类问题只会更多。
+
+**1.3 的处理**：spec 不写坐标，`svgfig.py build` 自动布局（区室约束分层 → 重心 + PAV 列序 → 让开直通链 → 正交通道布线、反馈走外侧 → 标签逐段试放），按 `width_mm`/`min_font_pt` 选字号与图例位置；加脂双层/核膜/基因启动子/复合物八角框/修饰角标图元与图例；新增 WARN：分档色近白、字号低于工单、标签压边；输出 `*_resolved_spec.json` 供修改。
+
+**同一输入、按 1.3 SKILL.md 重跑**（命令调用约 8 次：读任务、骨架、读源、spec+build、render+pixcheck、v2+diff+render、notes+assemble）：
+- build 0 WARN，最小字号 6.3 pt（183 mm），8 处边交叉；PNG 4323 px 宽（600 dpi），PDF 矢量、字体全嵌入；pixcheck 17 节点通过。
+- 反馈环（SMAD7 → SMURF2 ⊣ TGFBR1）从右侧外通道返回，SMAD7/SMURF2 自动落在胞质底部；并行支 TRAF6–TAK1–p38 自成一列；受体跨在脂双层上。
+- 修改：从 resolved spec 复制改 3 处，`edit_diff.json` 149 个 id 保留，9 条改动全部是请求内容（标签、3 个填色、新图例项）。
+- assemble：`PASS: 7 contract field(s), status=partial, 0 fail / 0 warn`。
+另用旧 cGAS–STING 案例（含 ER、Golgi 子区室）去掉全部坐标重建：0 WARN、6.0 pt、8 处交叉，ER 膜画成胞质内的脂双层小带、Golgi 为子框；无渲染器时标准库 PDF 与 matplotlib 回退渲染均正确画出新图元。
+
+**仍有的局限**：布局是启发式，复杂图仍有交叉与绕线；resolved spec 固定了节点宽度，修改版长标签会换行；排版提示（`col`/`rank`/`feedback`）需要模型看了 WARN 后自己加。

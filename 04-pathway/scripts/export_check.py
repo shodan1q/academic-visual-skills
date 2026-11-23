@@ -684,7 +684,7 @@ def assemble(a):
     rc = check([])
     return 1 if bad else rc
 
-SKILL_VER = "bio-pathway-figure-lite 1.2"
+SKILL_VER = "bio-pathway-figure-lite 1.3"
 CONSUMED = {"fields", "status", "status_reasons", "run_notes", "edit_request", "summary", "compliance_checks", "exceptions", "change_log", "caption"}
 
 def blocks(out, notes):
@@ -701,7 +701,7 @@ def blocks(out, notes):
     B = {"artifacts": [{"path": n, "role": "source" if n.endswith(".svg") or n in specs else "export" if n.endswith((".pdf", ".png")) else "record"} for n in ls]}
     B["editable_source"] = {k: v for k, v in (("svg", svgs or None), ("spec", specs or None),
         ("layers", ["panels", "edges", "nodes", "data", "text", "legend"] if main else None),
-        ("how_to_edit", "edit the spec and run svgfig.py build, or svgfig.py edit <in.svg> <out.svg> <id> --text/--set" if main else None)) if v is not None}
+        ("how_to_edit", "copy *_resolved_spec.json (fixed coordinates), edit labels/colours and run svgfig.py build; or svgfig.py edit <in.svg> <out.svg> <id> --text/--set" if main else None)) if v is not None}
     ex = []
     for e in logs:
         ex += [{"file": os.path.basename(str(e.get(f))), "format": f, "dpi": e.get("dpi"), "canvas_px": e.get("canvas_px"), "renderer": e.get(f + "_method"),

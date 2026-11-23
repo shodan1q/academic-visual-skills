@@ -21,7 +21,8 @@
 - [ ] 灰度打印下靠线型/端点仍能区分关系类型。
 
 ## 导出与修改
-- [ ] 格式、宽度 mm、dpi 与工单一致；最小字号换算成 pt 后 ≥ 工单要求。
-- [ ] 修改在源上完成（spec_v2 重建或 edit），`edit_diff.json` 只含预期改动，旧 id 基本全部保留；新版本已渲染，pixcheck 提示看过。
+- [ ] 格式、宽度 mm、dpi 与工单一致；`canvas.width_mm`/`min_font_pt` 照抄工单，build 末行的最小字号 pt ≥ 工单要求。
+- [ ] 看一眼 PNG（或 content_map 的 layout）：没有节点重叠、没有压在节点上的标签；反馈环在外侧；边交叉数异常多时用 `col`/`rank` 提示重建一次。
+- [ ] 修改在源上完成（从 `figure_resolved_spec.json` 复制出 spec_v2 重建，或 edit），`edit_diff.json` 只含预期改动，旧 id 基本全部保留；新版本已渲染，pixcheck 提示看过。
 - [ ] 修改请求引入了材料没有的内容时，exceptions 有 `user_request_not_in_source`。
 - [ ] result.json（assemble 生成）：每个 contract 字段都有内容、无“生成中”，status 一个词，status_reasons 与 exceptions 一致，notes.json 里没有 `<…>` 模板残留。

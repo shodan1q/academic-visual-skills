@@ -31,31 +31,32 @@ paper.pdf 文本（示例，节选，行号来自 `pdftotext -layout`）：
 ```
 tableS3_log2fc.csv（示例，节选）：`gene,protein,log2FC_6h,padj` / `Ifnb1,IFN-beta,6.9,1e-12` / `Irf3,IRF3,-0.3,0.48` / `Trim30a,TRIM30a,3.1,4e-6`
 
-## 2. spec 片段（示例）
+## 2. spec 片段（示例；自动布局，不写任何坐标）
 ```json
-{"canvas": {"w": 1150, "h": 880, "width_mm": 180,
+{"canvas": {"width_mm": 180, "min_font_pt": 6,
   "colorscale": {"csv": "/input/data/tableS3_log2fc.csv", "key": "gene", "value": "log2FC_6h", "breaks": [-1, 1, 3, 5],
-                 "colors": ["#2166AC", "#E0E0E0", "#FDDBC7", "#EF8A62", "#B2182B"], "title": "log2FC, 6 h (Table S3)"}},
+                 "colors": ["#2166AC", "#CCCCCC", "#FDDBC7", "#EF8A62", "#B2182B"], "title": "log2FC, 6 h (Table S3)"}},
  "nodes": [
-  {"id": "n-irf3-c", "label": "IRF3", "kind": "protein", "comp": "p-cy", "data": "Irf3", "cx": 730, "cy": 520, "src": "src.txt:L14-15"},
-  {"id": "n-irf3-n", "label": "IRF3", "kind": "protein", "comp": "p-nu", "data": "Irf3", "cx": 730, "cy": 700, "src": "src.txt:L15-16"},
-  {"id": "n-ifnb1", "label": "Ifnb1", "kind": "gene", "comp": "p-nu", "data": "Ifnb1", "cx": 560, "cy": 790, "src": "src.txt:L16"}],
+  {"id": "n-irf3-c", "label": "IRF3", "kind": "protein", "comp": "p-cy", "data": "Irf3", "mods": ["P"], "src": "src.txt:L14-15"},
+  {"id": "n-irf3-n", "label": "IRF3", "kind": "protein", "comp": "p-nu", "data": "Irf3", "src": "src.txt:L15-16"},
+  {"id": "n-ifnb1", "label": "Ifnb1", "kind": "gene", "comp": "p-nu", "data": "Ifnb1", "src": "src.txt:L16"}],
  "edges": [
   {"id": "e-imp", "from": "n-irf3-c", "to": "n-irf3-n", "type": "transport", "label": "dimer → nucleus", "src": "src.txt:L15"},
   {"id": "e-tx1", "from": "n-irf3-n", "to": "n-ifnb1", "type": "activate", "label": "transcription", "src": "src.txt:L16"},
-  {"id": "e-ppm", "from": "n-ppm1a", "to": "n-tbk1", "type": "inhibit", "evidence": "indirect", "src": "src.txt:L23-24"}],
- "legend": {"x": 880, "y": 60, "title": "Legend"}}
+  {"id": "e-ppm", "from": "n-ppm1a", "to": "n-tbk1", "type": "inhibit", "evidence": "indirect", "src": "src.txt:L23-24"}]}
 ```
 
 ## 3. 命令与输出（示例，本机 rsvg-convert）
 ```bash
 python3 $S/scripts/export_check.py skeleton      # 第 2 步，任意 contract 写法
 python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec.json $OUT_DIR/figure.svg
-#  -> no warnings; 18 entities, 19 relations, 13 legend items (auto)
+#  -> no warnings; 18 entities, 19 relations, 17 legend items; auto layout, 8 edge crossings, smallest text 6.0 pt
+#     (panels p-er / p-golgi written with "in": "p-cy" become organelle boxes inside the cytosol)
 timeout 300 python3 $S/scripts/export_check.py render $OUT_DIR/figure.svg --dpi 600
 #  -> PNG 4252 x 3254 px (180 mm @ 600 dpi); PDF vector, 16 fonts embedded
 python3 $S/scripts/pixcheck.py $OUT_DIR/figure.svg
 #  -> PASS: 18 nodes inspected (re-render 1201 px), fills as declared, labels visible, every colour in legend
+cp $OUT_DIR/figure_resolved_spec.json $OUT_DIR/figure_spec_v2.json   # then change only the TBK1 label / IFNAR fill
 python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec_v2.json $OUT_DIR/figure_v2.svg
 python3 $S/scripts/svgfig.py diff $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg > $OUT_DIR/edit_diff.json
 #  -> 132 ids kept; changes: n-tbk1-label text "TBK1" -> "TBK1 / (p-S172)", n-ifnar fill #FFFFFF -> #BBBBBB, legend-fill-bbbbbb added
