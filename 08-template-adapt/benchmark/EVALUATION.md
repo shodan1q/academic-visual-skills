@@ -52,3 +52,18 @@
 - 为清掉无法满足的 WARN 反复重建 → SKILL 规定 WARN 只是提示，最多重建 2 轮，剩下的写进 uncertainty。
 - 没有渲染器 → `pptx_kit.py render` 自动探测、两次尝试、限时，失败写 render.json；status=partial 时 checker 把渲染类问题降为 WARN。
 - 复测 rt08：build → render → facts.json → assemble → checker PASS，result.json 的 5 个 contract 键全部按含义填好。
+
+## 版本 1.3：读者看到的页面与逐页修改记录（内部记录，合成案例，未做基础 Agent 对照）
+脚本换成与 06/07/09 共用的合并版；SKILL 增加"页面模式"、旧稿渲染对照和 `--baseline --edit-map` 逐页修改记录。
+同一合成案例（rt08：9 页旧模板 deck → 部门模板 10 页，旧稿含 "Fig. 3" 错号、"96%" 错数、一页 10 条长句；论文 Fig. 1 未提供图），
+维护者先按 1.2、再按 1.3 的 SKILL.md 各做一遍（内容与更正相同，只差流程与脚本）：
+| 看点 | 1.2 | 1.3 |
+|---|---|---|
+| 图页 | 模板"图片版式"：标题跑到图下方 20 pt，与其他页标题位置不一致，没有结论要点 | 与其他页同一标题位置；图满宽在上，题注 + 1–2 条要点在下 |
+| 表格页 | 14 pt，表在页顶、下半页空白 | 24 pt、按内容分配列宽，最优行加粗，表下 1 条结论 |
+| 化学式/单位 | "Al2O3"、"cm-1"、"Ce3+" 纯文本 | 真下标/上标（Al₂O₃、cm⁻¹、Ce³⁺），文字检查不受影响 |
+| 修改记录 | change_log + corrections.md | 另有 version_diff.md（10 页逐页 - 旧行 / + 新行）、versions/v0_before.pdf 旧稿渲染 |
+| 合规记录 | 由 Agent 手写 | checker 写入 9 行 `by: check_result.py`（含逐页修改记录一行）+ 命令与 WARN 原文 |
+| checker 抓到的问题 | - | 1.3 首版图页要点写了"旧稿是 96%"，checker 报"只在旧 deck 出现的数字"→ 移进备注后 PASS（SKILL 已加一句） |
+| 调用次数 | 约 13 | 约 16（多 1 次旧稿渲染在同一调用内，1 次因上述 FAIL 重建） |
+已知局限：4:3 模板上宽高比约 1.6 的图在上图下文排版时约 5 in 宽，比图片版式略小；要点只留 1 行可放大。

@@ -23,20 +23,23 @@ export SKILL_DIR=/skills/weekly-skill WORK_DIR=/app/work OUT_DIR=/app/output; K=
 cat /input/case.json; find /input -maxdepth 3 -type f; cat /input/artifacts/slide-workorder.json
 python3 $C --init
 python3 $K inspect /input/target-template.pptx                                   # -> template_spec.md（角色→版式→占位符、字号阶梯）
-pdftotext -layout /input/paper.pdf $WORK_DIR/paper.txt                          # + 题注列表
+python3 $K paper /input/paper.pdf $WORK_DIR                                    # paper.txt + 题注列表
 python3 $K inspect /input/starting-deck.pptx --full > $WORK_DIR/start_text.txt; unzip -o -q /input/starting-deck.pptx 'ppt/media/*' -d $WORK_DIR/start
 for w in 96 94 "Fig. 3" "Fig. 2"; do printf "%s " "$w"; grep -c -- "$w" $WORK_DIR/paper.txt; done   # 对账 -> corrections.md
 python3 $K build $WORK_DIR/spec.json | tee $WORK_DIR/build.log
 python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+cp /input/starting-deck.pptx $WORK_DIR/v0.pptx && python3 $K render $WORK_DIR/v0.pptx && mkdir -p $OUT_DIR/versions && cp $WORK_DIR/v0.pdf $OUT_DIR/versions/v0_before.pdf   # 旧稿对照
 python3 $C --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
-python3 $C --template /input/target-template.pptx --paper $WORK_DIR/paper.txt --source $WORK_DIR/start_text.txt --slides 10 --min-pt 18
+python3 $C --template /input/target-template.pptx --paper $WORK_DIR/paper.txt --source $WORK_DIR/start_text.txt --slides 10 --min-pt 18 \
+   --baseline /input/starting-deck.pptx --edit-map 1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:7,9:8,10:9   # 最后跑：逐页改前/改后 version_diff.md，判定行写回 result.json
 ```
 
 ## 3. 示意输出（示例，节选）
 build 的 placed 行（示例）：
 ```text
 placed slide 2 [PKU-Content]: title->ph title idx0 'Title 1' 9.0x1.2in 44pt; source_note->ph body idx13 'Source note' 9.0x0.4in 12pt; body->ph obj idx1 'Content Placeholder 2' 9.0x4.7in 32pt
-placed slide 5 [PKU-Figure]: title->ph title idx0 'Title 1' 6.0x0.6in 20pt; source_note->ph body idx13 'Source note' 9.0x0.4in 12pt; caption->ph body idx2 'Text Placeholder 3' 6.0x0.9in 14pt
+placed slide 5 [PKU-Content]: title->ph title idx0 'Title 1' 9.0x1.2in 44pt; source_note->ph body idx13 'Source note' 9.0x0.4in 12pt; stacked: visual on top (9.0x3.6in), body below; body->ph obj idx1 'Content Placeholder 2' 9.0x1.1in 20pt
+placed slide 4 [PKU-Content]: ... stacked: visual on top (9.0x3.8in), body below; ...; table 5x3 at 24pt
 ```
 corrections.md（示例）：
 ```text
