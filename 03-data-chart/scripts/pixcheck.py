@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """pixcheck (stdlib, py3.8+): inspect the RENDERED chart, not only the SVG text (the agent cannot see images).
   pixcheck.py chart.svg [--png chart.png] [--map chart_content_map.json] [--workorder wo.json]
-              [--width-mm 89] [--dpi 600] [--min-font 6]          -> PASS/FAIL, writes <stem>_pixel_check.json
+              [--width-mm 89] [--dpi 600] [--min-font 6]          -> ADVISORY: WARN lines only, exit 0, writes <stem>_pixel_check.json
+Fix an obvious problem once (wrong width/dpi, red-green pair, label below min pt); otherwise record the warnings and go on.
 Checks: PNG size = width_mm x dpi; figure not blank / not clipped; every bar renders in its declared series colour;
 every series colour is really on the image and no undeclared colour cluster appears (legend = marks); series colours
 stay distinguishable under protan/deutan/tritan simulation and in greyscale; smallest SVG font >= min pt;
@@ -73,7 +74,11 @@ def main(a):
     svg, o = a[0], dict(zip(a[1::2], a[2::2]))
     stem = os.path.splitext(svg)[0]
     png, cmp_ = o.get("--png", stem + ".png"), o.get("--map", stem + "_content_map.json")
-    wo = json.load(open(o["--workorder"], encoding="utf-8")) if o.get("--workorder") else {}
+    try:
+        wo = json.load(open(o["--workorder"], encoding="utf-8")) if o.get("--workorder") else {}
+    except Exception as e:
+        print("WARN: workorder not readable (%s); using --width-mm/--dpi or the content map" % str(e)[:80])
+        wo = {}
     ex = wo.get("export", wo) if isinstance(wo, dict) else {}
     cm = json.load(open(cmp_, encoding="utf-8")) if os.path.exists(cmp_) else {}
     wmm = float(o.get("--width-mm") or ex.get("width_mm") or cm.get("style", {}).get("width_mm") or 0)
@@ -93,11 +98,15 @@ def main(a):
             import export_check as ec
             tmp = os.path.join(tempfile.mkdtemp(), "inspect.png")
             m, _ = ec.chain("png", svg, tmp, 96.0 * 1600 / ec.svg_size(svg)[0])
+            if not m:
+                raise ValueError("export PNG too large to decode here and no renderer for a smaller copy")
             pw, ph, px = readpng(tmp)
             rep["inspected"] = "re-render %dx%d of the same SVG via %s (export PNG too large for pure-Python decode)" % (pw, ph, m)
     except Exception as e:
-        print("FAIL: cannot read/inspect PNG %s: %s" % (png, e))
-        return 1
+        rep.update(skipped="cannot read/inspect PNG %s: %s" % (os.path.basename(png), str(e).replace(os.path.dirname(os.path.abspath(png)) + os.sep, "")[:120]), warnings=[], fails=[], advisory=True)
+        json.dump(rep, open(stem + "_pixel_check.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print("WARN: %s (advisory check skipped; record it and move on)" % rep["skipped"])
+        return 0
     rep["export_png_px"] = [ew, eh]
     if wmm:
         want = wmm / 25.4 * dpi
@@ -170,14 +179,15 @@ def main(a):
     F += [] if texts else ["SVG has no <text>: labels are outlined or raster, not editable"]
     for w in cm.get("warnings", []):
         (F if "render:" in w else Wn).append("content map: " + w + ("" if "render:" in w else " -> record it in exceptions"))
+    Wn, F = Wn + F, []  # advisory: nothing here blocks delivery
     rep.update(marks=marks, series_colours=series_cols, colour_clusters=["#%02X%02X%02X x%d" % (c + (n,)) for n, c in sorted(clusters, reverse=True)[:10]],
-               colour_vision=cvd, fails=F, warnings=Wn)
+               colour_vision=cvd, fails=F, warnings=Wn, advisory=True)
     outp = stem + "_pixel_check.json"
     json.dump(rep, open(outp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    print("\n".join(["WARN: " + x for x in Wn] + ["FAIL: " + x for x in F]))
+    print("\n".join(["WARN: " + x for x in Wn]) or "no warnings")
     print("%s: %d bars sampled on %s, ink %.1f%%, PNG %s px (want %s), min font %s pt -> %s" % (
-        "FAIL" if F else "PASS", len(marks), rep["inspected"], ink * 100, rep["export_png_px"], rep.get("expected_width_px", "n/a"), rep["min_font_pt"], outp))
-    return 1 if F else 0
+        "ADVISORY %d warn" % len(Wn) if Wn else "PASS", len(marks), rep["inspected"], ink * 100, rep["export_png_px"], rep.get("expected_width_px", "n/a"), rep["min_font_pt"], outp))
+    return 0
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

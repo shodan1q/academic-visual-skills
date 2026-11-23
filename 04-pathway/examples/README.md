@@ -49,6 +49,7 @@ tableS3_log2fc.csv（示例，节选）：`gene,protein,log2FC_6h,padj` / `Ifnb1
 
 ## 3. 命令与输出（示例，本机 rsvg-convert）
 ```bash
+python3 $S/scripts/export_check.py skeleton      # 第 2 步，任意 contract 写法
 python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec.json $OUT_DIR/figure.svg
 #  -> no warnings; 18 entities, 19 relations, 13 legend items (auto)
 timeout 300 python3 $S/scripts/export_check.py render $OUT_DIR/figure.svg --dpi 600
@@ -58,10 +59,12 @@ python3 $S/scripts/pixcheck.py $OUT_DIR/figure.svg
 python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec_v2.json $OUT_DIR/figure_v2.svg
 python3 $S/scripts/svgfig.py diff $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg > $OUT_DIR/edit_diff.json
 #  -> 132 ids kept; changes: n-tbk1-label text "TBK1" -> "TBK1 / (p-S172)", n-ifnar fill #FFFFFF -> #BBBBBB, legend-fill-bbbbbb added
-python3 $S/scripts/export_check.py check
+python3 $S/scripts/export_check.py assemble $WORK_DIR/notes.json   # notes 只含 status、reasons、compliance_checks、exceptions、edit_request
+#  -> assembled result.json: status=partial, 7 contract field(s) ...
 #  -> PASS: 7 contract field(s), status=partial, 0 fail / 0 warn
 ```
-第一次 build v2 时只改了颜色、没加图例项，pixcheck 报 `node n-ifnar colour #BABABA has no legend swatch`；在 spec_v2 的 legend.items 加 `{"fill":"#BBBBBB","label":"recoloured on request (no data)"}` 后通过。
+第一次 build v2 时只改了颜色、没加图例项，pixcheck 提示 `node n-ifnar colour #BABABA has no legend swatch`；在 spec_v2 的 legend.items 加 `{"fill":"#BBBBBB","label":"recoloured on request (no data)"}` 后消失（提示不阻断交付，改一次即可）。
+contract 换成别的名字（示例：`[{"field":"caseId"},{"field":"outcome","allowed":["done","partial","failed"]},{"field":"diagramSource"},{"field":"previewFiles"},{"field":"elementProvenance"},{"field":"qcResults"},{"field":"knownProblems"},{"field":"editHistory"},{"field":"图注"}]`）时，assemble 把它们分别填成 case_id、状态词（partial）、editable_source、export_artifact、content_map、compliance_checks、exceptions、change_log、caption。
 
 ## 4. result.json 节选（示例）
 ```json

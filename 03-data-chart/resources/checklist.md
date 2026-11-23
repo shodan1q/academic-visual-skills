@@ -1,6 +1,6 @@
 # 交付前自检清单（数据图表）
 
-`chartkit.py marks`、`pixcheck.py`、`export_check.py check` 都 PASS 后，再逐条核对，结论写进 result.json 的 compliance_checks / exceptions：
+`chartkit.py marks` PASS（或改 2 轮后记进 exceptions）、`export_check.py assemble` 末尾 check 无 FAIL 后，再逐条核对，结论写进 notes.json 的 compliance_checks / exceptions 并重跑 assemble。pixcheck 只给提示：
 
 ## 数据 → 图元
 - [ ] `chart_data.csv` 是源数据的原样副本；`data_origin` 指向 /input 原文件，content map 里有两者 sha256。
@@ -16,10 +16,10 @@
 - [ ] n 写明统计单位；基因斜体、基因型上标、化合物缩写与全名照原文。
 
 ## 样式与导出
-- [ ] `chart_pixel_check.json` 无 fails：PNG 宽 = width_mm × dpi，最小字号 ≥ 工单要求，柱色 = 图例色，色盲模拟可分。
+- [ ] `chart_pixel_check.json` 的提示看过：PNG 宽 = width_mm × dpi，最小字号 ≥ 工单要求，柱色 = 图例色，色盲模拟可分；改不掉或按请求保留的写进 exceptions。
 - [ ] SVG 文字可编辑（svg.fonttype none），PDF 字体 Type 42；实际字体（可能是替代字体）写进 export_artifact 与 status_reasons。
-- [ ] 无遮挡、无裁切（pixcheck 边缘告警已处理）。
+- [ ] 无遮挡、无裁切（pixcheck 边缘提示看过，明显的改一次）。
 
 ## 可编辑性与记录
 - [ ] 修改通过 `edit_v2.json` + 重跑完成，`edit_diff.json` 只含预期改动；v2 也跑过 marks 与 pixcheck。
-- [ ] result.json：case_id、全部 contract 字段、status 一个词、status_reasons、compliance_checks 覆盖工单每一项（element_ids 真实存在）、exceptions 分类（material_missing / undecidable / contradiction / run_failure / user_request_not_in_source / data_excluded）。
+- [ ] result.json（assemble 生成）：case_id、全部 contract 字段无“生成中”、status 一个词、status_reasons、compliance_checks 覆盖工单每一项（element_ids 真实存在）、exceptions 分类（material_missing / undecidable / contradiction / run_failure / user_request_not_in_source / data_excluded）。

@@ -49,3 +49,22 @@
 - “这句话到底是激活还是抑制”“证据算不算直接”仍是模型判断；脚本只保证判断被显式记录、被一致地画出。
 - 纯文本模型看不到 PDF 中原图的像素，只能依据图注与正文；这一点会写进 exceptions。
 - pixcheck 对超过约 260 万像素的导出图通过同源 1200 px 重渲染来检查，不逐像素解码原图。
+
+## 6. 1.2 调整：运行预算内的稳健性（2026-11）
+同一套 1.1 设计用到字段名不同、工具更少的环境时，会在“收尾”上耗掉预算。按四个假设用合成案例复现（SYN04-TEST-C：TLR4–NF-κB 通路，contract 写成 `deliverables: [{field: caseId}, {field: outcome, allowed: [done, partial, failed]}, diagramSource, previewFiles, elementProvenance, qcResults, knownProblems, editHistory, 图注]`）：
+
+| 假设 | 1.1 上的复现 | 1.2 的处理 |
+|---|---|---|
+| H1 组装只填固定字段名 | 组装模板只写 editable_source / export_artifact / content_map / compliance_checks / exceptions，这 9 个 contract 字段都会残留“生成中”或缺失，check 判 FAIL；骨架要模型自己解析字段对象列表 | `export_check.py skeleton` 认所有 contract 写法；`assemble` 按含义映射（caseId→case_id、outcome→状态词、diagramSource→editable_source、previewFiles→export_artifact、elementProvenance→content_map、qcResults→compliance_checks、knownProblems→exceptions、editHistory→change_log、图注→caption），认不出的填运行摘要并记 run_notes |
+| H2 可选文件缺失时组装崩溃 | 无渲染器时 v2 pixcheck 退出 1 且不写 `figure_pixel_check.json` → 模板 `FileNotFoundError`；`edit_diff.json` 也是无条件读取 | assemble 每个输入都可缺；notes.json 坏了明确报 FAIL |
+| H3 不可满足的外观检查导致循环 | SKILL 要求“build WARN 全部改到消失”、“pixcheck FAIL → 重建”；版面类 WARN（如图例略超出画布）不一定能在几轮内消掉；check 把模板槽、不存在的 element_id 判 FAIL | build WARN 最多再改两轮，剩下的由 assemble 自动记入 exceptions；pixcheck 只给提示、退出码 0；模板槽与 element_id 降为 WARN（与 02 的 1.2 一致） |
+| H4 渲染器缺失 | PATH 中无渲染器：render 不出 PNG/PDF，pixcheck FAIL，check 报“无预览”FAIL（不可满足） | render 末端加内置渲染：有 matplotlib 出 PNG+PDF，否则出标准库矢量 PDF（Helvetica/Symbol，希腊字母可显示）；pixcheck 读不了 PNG 写 `skipped`；渲染确实失败过的 SVG 不再判 FAIL |
+
+保留不变：实体/关系/区室规则、CSV 分档上色与自动图例、content map、源级修改 + diff、工单逐条对照、分类异常。
+
+自测（作者按 SKILL.md 执行，合成案例，非正式案例）：
+- 本机有 rsvg-convert：PNG 2126 px（180 mm @ 300 dpi）+ 矢量 PDF（15 个字体嵌入）；pixcheck 9 个节点无提示；assemble → `PASS: 9 contract field(s), status=partial, 0 fail / 0 warn`，build 剩下的“图例超出画布”自动进 knownProblems。
+- 本机 PATH 中无任何渲染器、无 matplotlib：render 出标准库矢量 PDF，pixcheck 跳过，assemble PASS，exceptions 记缺 PNG 与跳过的像素检查。
+- gpu 服务器（matplotlib，无 rsvg/cairosvg/magick）：render 用内置 matplotlib 出 PNG+PDF，pixcheck 在 1200 px 重渲染上检查 9 个节点无提示，assemble PASS。
+- 内置渲染与 rsvg 渲染目视对照：区室、膜带、节点、斜体基因名、箭头/T 端/圆点端 marker、虚线 transport、图例都在原位。
+

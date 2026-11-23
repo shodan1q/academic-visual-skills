@@ -31,13 +31,22 @@ $ python3 $S/scripts/chartkit.py marks chart.svg chart_marks_expected.csv
 err-0-1: length: value 6.55473 -> 18.73 px, residual 0.00% of axis OK
 scale(length): 2.8570 px per unit from y-axis ticks [0.0, 10.0, 20.0, 30.0, 40.0, 50.0] (OK)
 PASS: 23 mark sample(s), 0 problem(s)
-$ python3 $S/scripts/pixcheck.py chart.svg --workorder /input/artifacts/figure-workorder.json
+$ python3 $S/scripts/export_check.py skeleton     # 第 2 步，任意 contract 写法
+skeleton result.json: case_id='example-03', fields=['case_id', 'compliance_checks', 'content_map', ...]
+$ python3 $S/scripts/pixcheck.py chart.svg --workorder /input/artifacts/figure-workorder.json   # 只给提示，退出码 0
 PASS: 4 bars sampled on export PNG itself, ink 13.0%, PNG [2102, 1535] px (want 2102), min font 7.0 pt
 $ (若把空值当 0 计算期望值) -> bar-0-1: length: value 28.175 -> 107.33 px, residual 18.78% of axis MISMATCH ... FAIL
 $ echo '{"colors": {"DMXAA": "#D55E00"}, "ylabel": "..."}' > edit_v2.json
 $ timeout 120 python3 make_chart.py chart_v2 edit_v2.json && python3 $S/scripts/chartkit.py diff chart.svg chart_v2.svg
 {"kept_ids": 58, "changed_ids": ["bar-0-1", "bar-1-1", "patch_6", "ylabel"], ...}
-$ python3 $S/scripts/export_check.py check   -> PASS: 7 contract field(s), status=partial, 0 fail / 0 warn
+$ cat > /app/work/notes.json   # 只写判断：status、status_reasons、compliance_checks、exceptions、edit_request
+$ python3 $S/scripts/export_check.py assemble /app/work/notes.json
+assembled result.json: status=partial, 7 contract field(s): case_id<-case_id, status<-status, editable_source<-editable_source, ...
+PASS: 7 contract field(s), status=partial, 0 fail / 0 warn
+```
+contract 换成别的名字（示例：`{"required": ["case_id", "run_status", "figure_source_files", "rendered_outputs", "provenance_table", "qa_report", "open_issues", "revision_history"]}`）时，assemble 输出
+`run_status<-status, figure_source_files<-editable_source, rendered_outputs<-export_artifact, provenance_table<-content_map, qa_report<-compliance_checks, open_issues<-exceptions, revision_history<-change_log`。
+```
 ```
 
 ## 3. 示意结果（示例，节选）

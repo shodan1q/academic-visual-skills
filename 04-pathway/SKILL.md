@@ -8,17 +8,18 @@ description: 把机制材料（原始论文 PDF、figure 工单 figure-workorder
 ## 路径与预算
 - 输入 `/input/case.json`、task.md、材料（常见：`source/*.pdf` 原始论文、`artifacts/figure-workorder.json` 工单、`data/*.csv`）。先 `ls -R /input`，路径以 case.json 为准。工作目录 `/app/work`，交付 `/app/output`，本 Skill 在 `/skills/weekly-skill`（下文 `$S`）。环境变量 `CASE_JSON`/`WORK_DIR`/`OUT_DIR` 若存在一律优先。
 - 预算 64 次请求 / 900 秒，**目标 20–30 次调用**。渲染加 `timeout`。只用 python 改文件，不用 `sed -i`。Python 3.8 兼容。
-- 脚本：`svgfig.py`（spec→SVG + content_map；edit；diff）、`export_check.py`（tools、render、check）、`pixcheck.py`（看渲染像素）。
+- 脚本：`svgfig.py`（spec→SVG + content_map；edit；diff）、`export_check.py`（skeleton、tools、render、assemble、check）、`pixcheck.py`（看渲染像素，只给提示）。
+- 任何脚本或外部工具不可用、报错：记录原因，换下一条路或跳过，同一步重试不超过 2 次。
 
 ## 步骤
 1. **读任务（1 次）**：一条命令 `cat` case.json、工单 JSON、task.md 末尾“组织方具体输入修订”，并 `sha256sum` 所有材料（记入 versions）。记下：case_id（`case_id`/`caseId`/`id`）、要画/改的是哪张图（如 figure03 / 3E）、必需区室、必需关系类型、反馈/分支、命名规则（物种）、导出格式/宽度 mm/dpi/最小字号、**修改请求**、output_contract 全部字段。
-2. **骨架（第 2 次调用）**：写 `/app/output/result.json`：case_id + 每个 contract 字段填 `"生成中"` + `"status":"partial"` + `"status_reasons":["生成中"]`；同一命令跑 `timeout 60 python3 $S/scripts/export_check.py tools`。（check 会把残留的“生成中”判 FAIL，最后必须替换。）
+2. **骨架（第 2 次调用）**：`python3 $S/scripts/export_check.py skeleton; timeout 60 python3 $S/scripts/export_check.py tools`。skeleton 认得各种 contract 写法（列表、properties/required、字段对象、中文/驼峰键），写出 case_id + 每个字段“生成中”+ status partial；第 8 步 assemble 会全部替换。
 3. **读源（1–3 次）**：PDF 用 `pdftotext -layout f.pdf /app/work/src.txt`（无则 python fitz/pypdf；都没有 → exceptions 记“材料无法读取”）；先 `grep -n -i -E "fig(ure)?\.? ?3|<关键词>" src.txt` 定位**图注和对应结果段**，再读这些段落全文。CSV 直接读。图片内容读不了就写“未读出”，不猜。材料自带 SVG 要求修改 → 走第 7 步，不重画。
 4. **决定再画（在写 spec 时完成，不另开文件）**：对每个实体定 `kind`、`comp`、显示名（同义名放 `aliases`）、`src`；对每条关系定 `type`、方向、`evidence`、`src`。逐条过下方“机制规则”。拿不准的进 exceptions，不自行补全。
-5. **spec → build（2–4 次）**：写 `/app/output/figure_spec.json`，`python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg`（同时生成 `figure_content_map.json`）。**WARN 全部改到消失**（缺 src/kind、区室未命名、节点不在所属区室、transport 连了不同实体、两条边重叠、穿节点、穿图例、标签溢出、图例缺项）；确实不能改的写进 exceptions。
-6. **导出 + 看像素（1–2 次）**：`timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi <工单dpi或300>`，同一命令接 `python3 $S/scripts/pixcheck.py /app/output/figure.svg`。pixcheck FAIL（填色没按声明渲染、标签不可见、节点颜色在图例里找不到、边样式无图例）→ 改 spec 重 build 重渲染。渲染器全失败：保留 SVG，记录 export_log，status partial，不伪造 PNG。
-7. **源文件级修改（2–3 次）**：工单/任务有修改请求就照做；没有就做一次“演示编辑”（换一个标签措辞或颜色），change_log 标“演示，不属于正式图”。自己生成的图：复制 spec 为 `figure_spec_v2.json`，改对应节点/边，build 到 `figure_v2.svg`（会重新换行与查错）；材料自带 SVG 或单属性改动：`svgfig.py edit in.svg out.svg <id> --text "新标签" --set fill=#BBBBBB`（edit 若提示标签超宽，改用 spec 重建）。改颜色时在 spec_v2 的 legend.items 加 `{"fill":"#hex","label":"含义"}`（自加项排在最后，旧图例 id 不变），否则 build/pixcheck 会报“颜色无图例”。然后 `svgfig.py diff figure.svg figure_v2.svg > /app/output/edit_diff.json`，render + pixcheck 新版本。修改请求引入材料里没有的内容（如新位点、新数值）：照做，但在 exceptions 记 `user_request_not_in_source`，节点 src 写“工单 edit_request”。
-8. **写 result.json 并自检（2–3 次）**：用下方模板脚本从 content_map / pixel_check / export_log / edit_diff 自动组装（不要手抄表格），补上 compliance_checks 与 exceptions；运行 `python3 $S/scripts/export_check.py check`，FAIL 改到 PASS；对照 `$S/resources/checklist.md` 扫一遍。
+5. **spec → build（2–4 次）**：写 `/app/output/figure_spec.json`，`python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg`（同时生成 `figure_content_map.json`）。WARN（缺 src/kind、区室未命名、节点不在所属区室、transport 连了不同实体、两条边重叠、穿节点、穿图例、标签溢出、图例缺项）先改语义类的（区室、transport、图例缺项、缺 src），**最多再 build 两轮**；剩下的版面类 WARN 写进 exceptions（assemble 也会自动补录），不为它循环。
+6. **导出 + 看像素（1–2 次）**：`timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi <工单dpi或300>; python3 $S/scripts/pixcheck.py /app/output/figure.svg`。render 依次试 rsvg-convert / cairosvg / inkscape / chrome / magick / soffice，都没有时退到内置渲染（有 matplotlib 出 PNG+PDF，否则出标准库矢量 PDF，export_log 有 note）；没有 PNG 记 run_failure，不重试、不伪造。pixcheck 只给提示（退出码 0）：标签不可见、节点颜色无图例色块这类明显问题改一次 spec；其余记录即可。读不了 PNG 时它写 `skipped` 并跳过。
+7. **源文件级修改（2–3 次）**：工单/任务有修改请求就照做；没有就做一次“演示编辑”（换一个标签措辞或颜色），notes.json 的 edit_request 写“演示编辑（不属于正式图）：…”。自己生成的图：复制 spec 为 `figure_spec_v2.json`，改对应节点/边，build 到 `figure_v2.svg`（会重新换行与查错）；材料自带 SVG 或单属性改动：`svgfig.py edit in.svg out.svg <id> --text "新标签" --set fill=#BBBBBB`（edit 若提示标签超宽，改用 spec 重建）。改颜色时在 spec_v2 的 legend.items 加 `{"fill":"#hex","label":"含义"}`（自加项排在最后，旧图例 id 不变），否则 build/pixcheck 会报“颜色无图例”。然后 `svgfig.py diff figure.svg figure_v2.svg > /app/output/edit_diff.json`，render + pixcheck 新版本（pixcheck 同样只看一遍）。修改请求引入材料里没有的内容（如新位点、新数值）：照做，但在 exceptions 记 `user_request_not_in_source`，节点 src 写“工单 edit_request”。
+8. **组装 result.json 并自检（1–3 次）**：把只有你能判断的内容写进 `/app/work/notes.json`（格式见下），再 `python3 $S/scripts/export_check.py assemble /app/work/notes.json`。assemble 读 OUT_DIR 里已有的文件（content_map、pixel_check、export_log、edit_diff、spec、caption、source_map；**缺哪个都不报错**），按含义填好**每个 contract 字段**（字段名是什么都行），然后自动运行 check。FAIL 只改它点名的那一处，再跑 assemble，最多 2 轮；WARN 记录或忽略。对照 `$S/resources/checklist.md` 扫一遍。预算快用完时先跑一次 assemble（没有 notes.json 也能填满所有字段）。
 
 ## 机制规则（读者会逐条核对）
 **实体与命名**
@@ -69,26 +70,18 @@ description: 把机制材料（原始论文 PDF、figure 工单 figure-workorder
 ```
 其他键：`shape` rect|round|band|ellipse|circle|diamond、`fill`、`fs`、`bold`、`aliases`、`xref`（只写材料给出的 ID）；边 `via`、`elbow:"hv"|"vh"`、`both`、`width`；`texts[{id,text,x,y,fs,w,src}]`。图上不写 id、文件名、行号。
 
-## result.json 组装模板（第 8 步，按需改值后运行）
-```python
-import json,glob,os; O=os.environ.get("OUT_DIR","/app/output"); L=lambda p:json.load(open(os.path.join(O,p),encoding="utf-8"))
-r=L("result.json"); cm=L("figure_content_map.json"); px=L("figure_pixel_check.json")
-ex=[json.loads(l) for l in open(os.path.join(O,"export_log.jsonl"),encoding="utf-8")]
-r.update(status="partial", status_reasons=["<逐条：未决歧义/缺口；全部解决才写 complete 并留空列表说明>"],
- editable_source={"svg":"figure.svg","spec":"figure_spec.json","layers":["panels","edges","nodes","data","text","legend"],"edited":["figure_v2.svg","figure_spec_v2.json"],"how_to_edit":"改 spec 后 svgfig.py build，或 svgfig.py edit 按 id 改"},
- export_artifact=[{k:e.get(k) for k in ("png","pdf","png_method","pdf_is_vector","pdf_fonts","canvas_px","dpi")} for e in ex],
- content_map=dict(cm,file="figure_content_map.json"),
- compliance_checks=[{"requirement":"<工单/任务原文一项>","result":"pass|partial|fail","element_ids":["<SVG 中的 id>"],"evidence":"<怎么满足>"},
-   {"requirement":"pixel inspection","result":"pass" if not px["fails"] else "fail","element_ids":[],"evidence":"figure_pixel_check.json"}],
- exceptions=[{"category":"material_missing|undecidable|contradiction|run_failure|user_request_not_in_source","detail":"…","handling":"…"}],
- change_log=[dict(c,version="v2",reason="<修改请求原文>") for c in L("edit_diff.json")["changes"]],
- versions={"skill":"bio-pathway-figure-lite 1.1","materials_sha256":{"<文件>":"<sha>"},"renderer":ex[-1].get("png_method")},
- artifacts=[{"path":p,"role":"source" if p.endswith((".svg",".json")) else "export"} for p in sorted(os.listdir(O)) if p!="result.json"])
-json.dump(r,open(os.path.join(O,"result.json"),"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+## notes.json（第 8 步；只写判断，文件信息由 assemble 自动收集）
+```json
+{"status": "partial", "status_reasons": ["IRF3 磷酸化位点原文未给出"],
+ "compliance_checks": [{"requirement": "<工单/任务原文一项>", "result": "pass", "element_ids": ["p-pm", "n-rec", "e-imp"], "evidence": "怎么满足 + 出处（src.txt:L12）"}],
+ "exceptions": [{"category": "undecidable", "detail": "TBK1→IRF3 是否直接未检验", "handling": "evidence: hypothesis，图注说明"}],
+ "edit_request": "<修改请求原文；演示编辑写“演示编辑（不属于正式图）：…”>", "summary": "<一句话：画了哪张图、多少实体/关系>",
+ "fields": {"<某个 contract 字段>": "<只在你想亲自指定该字段内容时写>"}}
 ```
-- contract 字段名不同就按含义映射：源文件/路径 → editable_source；导出件 → export_artifact；来源/元素/映射 → content_map；检查/合规 → compliance_checks；异常/不确定/缺口 → exceptions。看不懂的字段填最接近内容并在 `run_notes` 说明。
-- compliance_checks 必须覆盖工单每一项（区室、必需关系类型、反馈/分支、命名、格式/宽度/dpi/最小字号、修改请求），`element_ids` 必须是 SVG 里真实存在的 id（check 会核对）。最小字号换算：pt = px × (width_mm×3.78/W) × 0.75。
-- **status 只写一个词**：contract 给了词表就用它的；否则 complete / partial / failed。exceptions 里有未决项 → partial；没出图 → failed。“材料缺失、无法判断、运行失败”分别用不同 category 写。
+- compliance_checks 必须覆盖工单每一项（区室、必需关系类型、反馈/分支、命名、格式/宽度/dpi/最小字号、修改请求）；result 用 pass / partial / fail；`element_ids` 写 SVG 里真实存在的 id（check 核对，不存在只给 WARN）。最小字号换算：pt = px × (width_mm×3.78/W) × 0.75。assemble 会自动追加像素检查一行。
+- exceptions 的 category：material_missing / undecidable / contradiction / run_failure / user_request_not_in_source。跳过的像素检查、缺失的导出格式、build 剩下的 WARN，assemble 会自动补录（已写过的不重复）。
+- 字段映射（自动）：源文件/spec/svg → editable_source；导出/预览/渲染 → export_artifact；来源/映射/实体/关系/元素 → content_map（含 entities、relations、compartments、legend、data_encoding）；检查/合规/QA → compliance_checks；异常/不确定/问题/缺口 → exceptions；修改/历史 → change_log（含 edit_diff）；图注 → caption；状态 → 一个词；认不出的字段填运行摘要 + 文件清单并记进 `run_notes`。
+- **status 只写一个词**：contract 给了词表，assemble 换成它的词；否则 complete / partial / failed。exceptions 里有未决项 → partial；没出图 → assemble 强制 failed。“材料缺失、无法判断、运行失败”分别用不同 category 写。
 
 ## 异常处理
 | 情况 | 处置 |
@@ -98,7 +91,8 @@ json.dump(r,open(os.path.join(O,"result.json"),"w",encoding="utf-8"),ensure_asci
 | 正文/摘要与数据表矛盾 | 颜色按数据表（colorscale），两处原文都写进 exceptions: contradiction |
 | 修改请求引入材料没有的内容 | 照做、src 标工单，exceptions: user_request_not_in_source |
 | 节点 > 25 不可读 | 非核心分支合并为一个节点并在 aliases/图注列出，或拆 a/b 两个 panel |
-| 渲染器或中文字体缺失 | 保留 SVG + export_log，改英文标签或记 tofu 风险，status partial |
+| 渲染器缺失 | render 自动用内置渲染（matplotlib → 标准库矢量 PDF）；没有 PNG 记 run_failure，status partial，不重试 |
+| 中文字体缺失 | 保留 SVG + export_log，改英文标签或记 tofu 风险（标准库 PDF 不含中文字形），status partial |
 
 ## 不做的事
 不编造实体、关系、位点、数值或来源；不把间接画成实线；不手挑数据颜色；不只交位图；图上不留 id/文件名/TODO；不伪造渲染、像素检查或人工确认。

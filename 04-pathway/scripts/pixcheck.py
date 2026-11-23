@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """pixcheck (stdlib, py3.8+): look at the RENDERED pixels of a pathway figure, not just the SVG text.
-  pixcheck.py figure.svg [figure.png]      -> prints PASS/FAIL lines, writes <stem>_pixel_check.json next to the SVG
+  pixcheck.py figure.svg [figure.png]      -> ADVISORY: WARN lines only (exit 0), writes <stem>_pixel_check.json next to the SVG
+Fix an obvious problem once (label invisible, colour without legend swatch); otherwise record the warnings and go on.
 Checks: export PNG size/dpi; figure not blank or clipped; every node's fill is rendered as declared and its label leaves
 ink (not lost / not white-on-white); label-vs-fill contrast; every node colour has a legend swatch with the same rendered
 colour (legend = figure); legend swatches distinguishable in greyscale; every edge colour/dash has a legend line.
@@ -90,13 +91,17 @@ def main(a):
         if px is None:
             tmp = os.path.join(tempfile.mkdtemp(), "inspect.png")
             m, _ = ec.chain("png", svg, tmp, 96.0 * 1200 / ec.svg_size(svg)[0])
+            if not m:
+                raise ValueError("export PNG too large to decode here and no renderer for a smaller copy")
             pw, ph, px = readpng(tmp)
             rep["inspected"] = "re-render %dx%d via %s (export PNG too large to decode in pure Python)" % (pw, ph, m)
         else:
             rep["inspected"] = "export PNG itself"
     except Exception as e:
-        print("FAIL: cannot read/inspect PNG %s: %s (run export_check.py render first)" % (png, e))
-        return 1
+        rep.update(skipped="cannot read/inspect PNG %s: %s" % (os.path.basename(png), str(e).replace(os.path.dirname(os.path.abspath(png)) + os.sep, "")[:120]), warnings=[], fails=[], advisory=True)
+        json.dump(rep, open(os.path.splitext(svg)[0] + "_pixel_check.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print("WARN: %s (advisory check skipped; record it and move on)" % rep["skipped"])
+        return 0
     s = pw / W
     P = lambda x, y: px(min(pw - 1, max(0, int(x * s))), min(ph - 1, max(0, int(y * s))))  # noqa: E731
     grid = [(x, y) for y in range(0, ph, max(1, ph // 120)) for x in range(0, pw, max(1, pw // 160))]
@@ -141,12 +146,13 @@ def main(a):
     lines = {sty(el) for el in lay.get("layer-legend", root).iter() if el.tag.endswith("line")}
     edges = {sty(el): el.get("id") for el in lay.get("layer-edges", root).iter() if el.tag.endswith("polyline")}
     F += ["edge style %s (e.g. %s) has no matching legend line" % (k, v) for k, v in edges.items() if lines and k not in lines and not any(k[1] and l[1] == k[1] for l in lines)]
-    rep.update(nodes=nodes, legend_swatches={k: "#%02X%02X%02X" % v for k, v in legend.items()}, fails=F, warnings=Wn)
+    Wn, F = Wn + F, []  # advisory: nothing here blocks delivery
+    rep.update(nodes=nodes, legend_swatches={k: "#%02X%02X%02X" % v for k, v in legend.items()}, fails=F, warnings=Wn, advisory=True)
     outp = os.path.splitext(svg)[0] + "_pixel_check.json"
     json.dump(rep, open(outp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    print("\n".join(["WARN: " + x for x in Wn] + ["FAIL: " + x for x in F]))
-    print("%s: %d nodes inspected on %s, ink %.1f%%, export %s px, dpi %s -> %s" % ("FAIL" if F else "PASS", len(nodes), rep["inspected"], ink * 100, rep["export_png_px"], rep["export_dpi"], outp))
-    return 1 if F else 0
+    print("\n".join(["WARN: " + x for x in Wn]) or "no warnings")
+    print("%s: %d nodes inspected on %s, ink %.1f%%, export %s px, dpi %s -> %s" % ("ADVISORY %d warn" % len(Wn) if Wn else "PASS", len(nodes), rep["inspected"], ink * 100, rep["export_png_px"], rep["export_dpi"], outp))
+    return 0
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

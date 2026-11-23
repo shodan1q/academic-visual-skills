@@ -49,3 +49,22 @@
 - 不重算显著性，只保证图上的符号都有原文出处；图注没写误差类型时只能记 undecidable。
 - PDF 中原图的像素读不到，只依据图注、正文与源数据。
 - pixcheck 不识别缺字方框；缺字靠 matplotlib 的 Glyph 告警（模板记录，check 判 FAIL）。
+
+## 7. 1.2 调整：运行预算内的稳健性（2026-11）
+同一套 1.1 设计用到字段名不同、工具更少的环境时，会在“收尾”上耗掉预算。按四个假设逐条用合成案例复现（SYN03-TEST-B：contract 写成 `required: [run_status, figure_source_files, rendered_outputs, provenance_table, qa_report, open_issues, revision_history, reviewer_note]`，修改请求把 xylose 设成与 glucose 相同的 #0072B2）：
+
+| 假设 | 1.1 上的复现 | 1.2 的处理 |
+|---|---|---|
+| H1 组装只填固定字段名 | 1.1 骨架一行命令不认 `properties/required`，只写出 `run_status`；组装模板照常写 editable_source 等 → check：7 个 contract 字段缺失 + `run_status` 残留“生成中” | `export_check.py skeleton` 认所有 contract 写法；`assemble` 按含义映射每个字段（run_status→状态词、figure_source_files→editable_source、rendered_outputs→export_artifact、provenance_table→content_map、qa_report→compliance_checks、open_issues→exceptions、revision_history→change_log），认不出的填运行摘要 + 文件清单并记 run_notes；check 按含义找 exceptions |
+| H2 可选文件缺失时组装崩溃 | 删掉 `chart_pixel_check.json` → `FileNotFoundError`；无 matplotlib 时 export_log 是 render 的格式，模板取 `e["stem"]` 会 KeyError | assemble 每个输入都可缺；两种 export_log 格式都认；notes.json 坏了会明确报 FAIL 而不是静默丢弃 |
+| H3 不可满足的外观检查导致循环 | 修改请求造成两系列同色 → v2 的 pixcheck 3 条 FAIL，check 把它们算作 FAIL，按 SKILL“照做”后永远过不了 | pixcheck 只给提示、退出码 0；data-to-mark 失败仍是 FAIL，但改 2 轮后在 exceptions 点名即降为 WARN；模板槽、element_id 不存在降为 WARN |
+| H4 渲染器缺失 | 无 matplotlib、无 rsvg 等：render 不出任何文件，pixcheck FAIL 且不写 json，check 报“无预览”FAIL（不可满足） | render 末端加内置渲染：有 matplotlib 出 PNG+PDF，否则出标准库矢量 PDF（base-14 字体）；pixcheck 读不了 PNG 写 `skipped`；渲染确实失败过的 SVG 不再判 FAIL |
+
+保留不变：模板从数据行复算、刻度标定对账（含误差线）、content map、源级修改 + diff、工单逐条对照、分类异常。
+
+自测（作者按 SKILL.md 执行，合成案例，非正式案例）：
+- gpu 服务器（matplotlib 3.11，无 rsvg/cairosvg/magick）：marks PASS 19 个样本；pixcheck 提示 1 条（n 不符）；v2 同色请求提示 4 条但退出码 0；assemble → `PASS: 9 contract field(s), status=partial, 0 fail / 0 warn`，exceptions 自动补录 n 不符与排除行。180 mm × 600 dpi 时 pixcheck 用内置 matplotlib 重渲染 1600 px 检查。
+- 本机无 matplotlib、PATH 中无任何渲染器：svgchart → render 出标准库矢量 PDF（无 PNG）→ pixcheck 跳过 → assemble PASS，exceptions 记录缺 PNG 与跳过的像素检查。有 rsvg 时同一路径出 PNG+PDF。
+- 公开示例的 7 字段 contract：映射为同名字段，输出与 1.1 结构一致。
+- 内置渲染与 rsvg 渲染逐图目视对照：柱、误差线、个体点、旋转的 y 轴标签、mathtext 下标、图例、箭头 marker 都在原位。
+
