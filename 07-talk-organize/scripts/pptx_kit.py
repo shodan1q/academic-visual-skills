@@ -5,6 +5,7 @@
                                                   # shapes by role (ph:title/ph:obj/text), table rows, pictures, notes
   python3 pptx_kit.py build SPEC.json     # write the deck, print per-slide summary + overflow/placeholder/integrity warnings
   python3 pptx_kit.py figcrop paper.pdf PAGE "Fig. 2" /app/work/fig2.png [DPI]   # crop a figure/table by its caption (poppler)
+  python3 pptx_kit.py render /app/output/presentation.pptx   # soffice (2 tries, 120 s each) -> PDF, pdftoppm PNGs, pdffonts, render.json
 
 SPEC = {"template": "template.pptx|.potx|starting_deck.pptx", "out": "/app/output/deck.pptx",
         "footer": "optional footer text", "date": "optional", "slide_numbers": true,
@@ -388,10 +389,66 @@ def figcrop(pdf, page, label, out, dpi=200):
     inside = [b[1][:40] for b in blocks if b[0][1] >= top - 1 and b[0][3] <= bot + 1 and b[0][0] >= lo - 1 and b[0][2] <= hi + 1]
     print("cropped page %s [%.0f,%.0f,%.0f,%.0f]pt -> %s\ntext inside crop (should be axis labels/legend/caption, not body paragraphs): %s" % (page, lo, top, hi, bot, out, inside[:12]))
 
+def render(deck, dpi=50):
+    """deck.pptx -> deck.pdf + preview/slide-N.png + render.json. Never raises: every failure is recorded honestly."""
+    import glob, shutil, subprocess, tempfile
+    out, stem = os.path.dirname(os.path.abspath(deck)), os.path.splitext(os.path.abspath(deck))[0]
+    rec = {"pptx": os.path.abspath(deck), "pdf": None, "png": [], "pages": None, "renderer": None, "fonts": [], "substitutions": [], "errors": [], "commands": []}
+    def run(cmd, t):
+        rec["commands"].append(" ".join(cmd))
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=t)
+            return r.returncode, (r.stdout or "") + (r.stderr or "")
+        except Exception as e:  # missing binary, timeout
+            return -1, "%s: %s" % (type(e).__name__, e)
+    for old in glob.glob(os.path.join(out, "preview", "slide*.png")) + glob.glob(stem + ".pdf"):
+        os.remove(old)  # stale previews from an earlier build must not pass as this build's render
+    env = os.environ.get("SOFFICE", "")
+    cands = ([env] if env and env != "none" and os.path.exists(env) else []) + [shutil.which(c) for c in ("soffice", "libreoffice")] + glob.glob("/usr/lib/libreoffice/program/soffice") + glob.glob("/opt/libreoffice*/program/soffice") + \
+        glob.glob("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+    so = None if env == "none" else next((c for c in cands if c), None)
+    if not so:
+        rec["errors"].append("no LibreOffice (soffice/libreoffice) found: PDF/PNG previews could not be produced")
+    for k in range(2 if so else 0):
+        prof = tempfile.mkdtemp(prefix="lo_kit%d_" % k)
+        rc, msg = run([so, "--headless", "-env:UserInstallation=file://" + prof, "--convert-to", "pdf", "--outdir", out, deck], 120)
+        if os.path.exists(stem + ".pdf") and os.path.getmtime(stem + ".pdf") >= os.path.getmtime(deck) - 1:
+            rec["pdf"], rec["renderer"] = stem + ".pdf", (run([so, "--version"], 30)[1].strip().splitlines() or ["LibreOffice"])[0][:80]
+            break
+        rec["errors"].append("soffice attempt %d failed (rc %s): %s" % (k + 1, rc, msg.strip()[-200:]))
+    if rec["pdf"]:
+        rc, info = run(["pdfinfo", rec["pdf"]], 30)
+        m = re.search(r"Pages:\s+(\d+)", info)
+        rec["pages"] = int(m.group(1)) if m else len(re.findall(rb"/Type\s*/Page(?!s)", open(rec["pdf"], "rb").read()))
+        os.makedirs(os.path.join(out, "preview"), exist_ok=True)
+        for tool in (["pdftoppm", "-png", "-r", str(dpi)], ["pdftocairo", "-png", "-r", str(dpi)]):
+            rc, msg = run(tool + [rec["pdf"], os.path.join(out, "preview", "slide")], 120)
+            rec["png"] = sorted(glob.glob(os.path.join(out, "preview", "slide*.png")))
+            if rec["png"]:
+                break
+            rec["errors"].append("%s failed: %s" % (tool[0], msg.strip()[-160:]))
+        rc, f = run(["pdffonts", rec["pdf"]], 30)
+        rec["fonts"] = sorted({ln.split()[0].split("+")[-1] for ln in f.splitlines()[2:] if ln.strip()}) if rc == 0 else []
+        try:
+            z, _, layouts, _ = load(deck)
+            th = rd(z, next((n for n in sorted(z) if n.startswith("ppt/theme/theme")), ""))
+            want = set(re.findall(r'<a:(?:latin|ea) typeface="([^"+][^"]*)"', th)[:4])
+            got = " ".join(rec["fonts"]).replace("-", "").lower()
+            rec["substitutions"] = ["%s not embedded (renderer substituted another font)" % w for w in sorted(want) if w.replace(" ", "").lower() not in got.replace(" ", "")]
+        except Exception as e:
+            rec["errors"].append("font comparison skipped: %s" % e)
+    rec["status"] = "rendered" if rec["png"] else "pdf_only" if rec["pdf"] else "failed"
+    json.dump(rec, open(os.path.join(out, "render.json"), "w"), indent=1, ensure_ascii=False)
+    print("render: %s | pdf=%s pages=%s png=%d | fonts=%s | substitutions=%s%s" % (rec["status"], rec["pdf"], rec["pages"], len(rec["png"]), rec["fonts"][:6],
+          rec["substitutions"], "\nrender errors: %s" % rec["errors"] if rec["errors"] else ""))
+    print("record written to %s (status partial + exceptions.run_failures if not 'rendered')" % os.path.join(out, "render.json"))
+
 if __name__ == "__main__":
-    if len(sys.argv) < 3 or sys.argv[1] not in ("inspect", "build", "figcrop"):
+    if len(sys.argv) < 3 or sys.argv[1] not in ("inspect", "build", "figcrop", "render"):
         sys.exit(__doc__)
-    if sys.argv[1] == "figcrop":
+    if sys.argv[1] == "render":
+        render(sys.argv[2])
+    elif sys.argv[1] == "figcrop":
         figcrop(*sys.argv[2:6], **({"dpi": int(sys.argv[6])} if len(sys.argv) > 6 else {}))
     else:
         inspect(sys.argv[2], "--full" in sys.argv) if sys.argv[1] == "inspect" else build(sys.argv[2])

@@ -48,3 +48,12 @@
 - 新增逐页审计表 `slide_audit.md`、骨架 `--init`、图片拉伸检查、标题溢出估算按 LibreOffice 渲染校准（两行标题不再误报）；修正 `placeholders` 键被当成占位文字的误报。
 
 复测（2026-11-20，本机 LibreOffice 26.2，只按本包 SKILL.md 操作）：rt06：只有论文 + 4:3 自定义模板（PKU-* 版式，正文占位符前面先有一个 12 pt "Source note"），8 页 generate；figcrop 裁 Fig. 3 时带进了正文段落，按 SKILL 改用 pdfimages 取原图。结果：result.json 字段齐全，PDF/PNG 页数与幻灯片数一致，checker PASS（剩余 WARN：封面标题按模板 44 pt 折成 3 行，已写进 uncertainty）。
+
+## 版本 1.2：运行稳健性（内部记录，未做基础 Agent 对照）
+针对四类会让运行时 Agent 交出残缺结果的情况：
+- result.json 按固定键名组装，而 contract 用了别的键名 → 骨架文字残留、checker FAIL。现在 `check_result.py --assemble` 按键名与描述的含义映射（中英文、嵌套子字段、JSON schema / 列表 / 字典三种 contract 写法都在合成用例上试过）。
+- 可选文件缺失导致组装脚本崩溃 → assemble 对每个文件做存在判断，缺了就跳过。
+- 为清掉无法满足的 WARN 反复重建 → SKILL 规定 WARN 只是提示，最多重建 2 轮，剩下的写进 uncertainty。
+- 没有渲染器 → `pptx_kit.py render` 自动探测、两次尝试、限时，失败写 render.json；status=partial 时 checker 把渲染类问题降为 WARN。
+- 主线覆盖：checker 对"Results / Method"这类话题标题和缺失的页型（问题/方法/结果/结论）给 WARN；figcrop 裁进正文时改用 `pdfimages` 取原始位图（rt06 里 Fig. 3 就是这样取的）。
+- 复测 rt06：8 页，render 出 PDF/PNG，assemble 后 checker PASS（content_map 没写 role 时报 "method 页型未找到" 的 WARN）。

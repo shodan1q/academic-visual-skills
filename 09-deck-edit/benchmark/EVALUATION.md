@@ -44,3 +44,12 @@
 - 新增逐页审计表 `slide_audit.md`、骨架 `--init`、图片拉伸检查、标题溢出估算按 LibreOffice 渲染校准（两行标题不再误报）；修正 `placeholders` 键被当成占位文字的误报。
 
 复测（2026-11-20，本机 LibreOffice 26.2，只按本包 SKILL.md 操作）：rt09：edit 模式，模板 = 初始稿；保留 1–5、8–9 页，E1 把 9 条要点页拆成两页，E2 重写稳定性页（初始稿 96% → 论文 94%）；保留页 5 的 "Fig. 3" 图号错误、22% 拉伸图与 14 pt 图注按保留要求不改，checker 以 `--preserved` 报 WARN 并写进 exceptions.undecidable。结果：result.json 字段齐全，PDF/PNG 页数与幻灯片数一致，checker PASS（剩余 WARN：封面标题按模板 44 pt 折成 3 行，已写进 uncertainty；保留页的问题如上）。
+
+## 版本 1.2：运行稳健性（内部记录，未做基础 Agent 对照）
+针对四类会让运行时 Agent 交出残缺结果的情况：
+- result.json 按固定键名组装，而 contract 用了别的键名 → 骨架文字残留、checker FAIL。现在 `check_result.py --assemble` 按键名与描述的含义映射（中英文、嵌套子字段、JSON schema / 列表 / 字典三种 contract 写法都在合成用例上试过）。
+- 可选文件缺失导致组装脚本崩溃 → assemble 对每个文件做存在判断，缺了就跳过。
+- 为清掉无法满足的 WARN 反复重建 → SKILL 规定 WARN 只是提示，最多重建 2 轮，剩下的写进 uncertainty。
+- 没有渲染器 → `pptx_kit.py render` 自动探测、两次尝试、限时，失败写 render.json；status=partial 时 checker 把渲染类问题降为 WARN。
+- 编辑任务专项：旧版对账规则让编辑页"以论文为准"，会产生指令之外的改动。现在只有指令要求核对事实、或该页按指令从论文重写时才更正，其余写成"建议更正（未执行）"；checker `--paper-advisory` 把论文不一致降为 WARN 清单。保留页由 `--baseline/--keep-map` 逐页比对文字，结果写 `version_diff.md`。
+- 复测 rt09：E2 页按指令从论文重写（94%）；保留页 5 的 "Fig. 3" 图号问题只出现在建议清单与 exceptions.undecidable；version_diff.md 7 个保留页全部 identical；checker PASS。

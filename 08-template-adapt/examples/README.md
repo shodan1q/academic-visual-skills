@@ -27,8 +27,8 @@ pdftotext -layout /input/paper.pdf $WORK_DIR/paper.txt                          
 python3 $K inspect /input/starting-deck.pptx --full > $WORK_DIR/start_text.txt; unzip -o -q /input/starting-deck.pptx 'ppt/media/*' -d $WORK_DIR/start
 for w in 96 94 "Fig. 3" "Fig. 2"; do printf "%s " "$w"; grep -c -- "$w" $WORK_DIR/paper.txt; done   # 对账 -> corrections.md
 python3 $K build $WORK_DIR/spec.json | tee $WORK_DIR/build.log
-cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_p1 --convert-to pdf presentation.pptx
-mkdir -p preview && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide; pdffonts presentation.pdf
+python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+python3 $C --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
 python3 $C --template /input/target-template.pptx --paper $WORK_DIR/paper.txt --source $WORK_DIR/start_text.txt --slides 10 --min-pt 18
 ```
 

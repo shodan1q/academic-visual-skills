@@ -41,14 +41,14 @@ starting-deck 每页都迁过去（`python3 $K inspect starting-deck.pptx --full
    （打印裁剪区内文字核对）；表格做成原生 `table`，数值逐格照抄。写 `$WORK_DIR/spec.json`（`"out": "$OUT_DIR/presentation.pptx"`），
    `python3 $K build $WORK_DIR/spec.json | tee $WORK_DIR/build.log`。内容/图/表页加 `"source_note": "Paper Table 1, p.3"`（页上可见出处，进模板的来源占位符或页脚上方小字），
    spec 顶层加 `"min_pt": 18`。build 每页打印 `placed slide N: body->ph obj idx1 ...`：核对正文进了版式里**面积最大**的占位符。
-   **字号阶梯**：标题 = 母版标题；正文 ≥ 工作单下限（没给就 18 pt）；表格 ≥ 14；图注 14；出处 11–12。**每条 WARN 都处理**（溢出→删字/拆页/换版式，
+   **字号阶梯**：标题 = 母版标题；正文 ≥ 工作单下限（没给就 18 pt）；表格 ≥ 14；图注 14；出处 11–12。**WARN 是提示：最多重建 2 轮**（删字/拆页/换版式），剩下的写进 uncertainty（溢出→删字/拆页/换版式，
    `font_size` 不低于阶梯）。备注 = 过渡句 + 强调点 + 追问时指向的证据 + 秒数。
-9. **导出**（2 次）：`cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_profile --convert-to pdf presentation.pptx`；
-   `mkdir -p preview && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide`；`pdffonts presentation.pdf`。失败就照实记录。
-10. **映射、记录与自检**（3 次）：写 `content_map.json`、`talk_plan.md`/`plan.md` 复制到 `$OUT_DIR`、`change_log.md`，填 result.json；
-    `python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template <模板> --min-pt <下限> [--slides N] [--source $WORK_DIR/start_text.txt]`
-    （有 starting-deck 才加 --source：抓"只在旧 deck 里出现的数字"和"图号与题注内容不符"）。checker 同时写 `$OUT_DIR/slide_audit.md`
-    （逐页版式、占位符、散装框、图片比例误差、最小字号、备注、PDF 丢字）。FAIL 必须修，最多两轮。
+9. **渲染**（1 次）：`python3 $K render $OUT_DIR/presentation.pptx` → `presentation.pdf`、`preview/slide-*.png`、pdffonts 实测、`render.json`（soffice 两次尝试各限 120 s、换 profile；pdftoppm/pdftocairo 限时；找不到 LibreOffice 也不报错，照实写进 render.json 的 errors）。
+   render 的 status 不是 `rendered` → 不声称有预览，result 的 status 写 partial，原因进 exceptions.run_failures。能看图就打开 2–3 张 PNG 目检。
+10. **记录 + 组装 + 自检**（2–3 次）：写 `content_map.json`、`change_log.md`，`talk_plan.md`/`plan.md` 复制到 `$OUT_DIR`。
+   把已知事实写进 `$WORK_DIR/facts.json`（只写有的：`content_map`、`compliance_checks`、`exceptions`{material_missing, undecidable, run_failures}、`uncertainty`、`change_log`、`status_reasons`，以及本题专有的 `audience_goal`、`selection_log`、`qa_prep`（按 contract 的实际键名写））。然后 `python3 $SKILL_DIR/scripts/check_result.py --assemble` → 按含义填满 contract 的**每一个**键（任何键名、中文名、嵌套子字段；facts 里同名键原样采用；缺的文件自动跳过，不留骨架字样），再跑
+   `python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template <模板> --min-pt <下限> [--slides N] [--source $WORK_DIR/start_text.txt]`
+   有 starting-deck 才加 --source。checker 还查主张标题和页型覆盖，并写 `$OUT_DIR/slide_audit.md`。FAIL 修，最多两轮；修不了的（没有渲染器、材料缺失）就 status=partial 写明原因。build/checker 的 WARN 是提示，不要为清 WARN 反复重建。
 
 ## 内容规则
 1. 不是压缩论文：页面只放服务目标的内容；被砍掉的内容在取舍表里有去向和理由。
@@ -67,6 +67,7 @@ content_map 每行：`{"slide": 4, "role": "结果", "claim": "...", "evidence_s
 "locator": "Table 1, p.3", "quote": "..."}], "numbers": [...], "seconds": 60, "transition": "...", "qa_refs": ["Q2"]}`。
 
 ## result.json 映射（任何键名风格按含义对应；嵌套按子字段填）
+实际写入用 `check_result.py --assemble`（它按含义映射任意键名）；下面是各键应含的内容，写进 facts.json 的同名键会原样采用。
 - 演示文件 / editable_source → `{"pptx", "spec", "rebuild", "slides", "layouts_used"}`；导出 / export_artifact → `{"pdf", "png", "pages", "renderer", "fonts", "substitutions", "slide_audit"}`
 - 页级证据映射 / content_map → content_map 内联列表 + 文件路径；合规检查 / compliance_checks → 页数、时长合计、模板继承、备注、溢出、数字回查、
   预览页数、字体，每项 `PASS/FAIL/WARN + 依据`；另加 `audience_goal`（目标句+听众画像）、`selection_log`（取舍表）、`qa_prep`（问题列表+文件路径）。
@@ -81,5 +82,5 @@ content_map 每行：`{"slide": 4, "role": "结果", "claim": "...", "evidence_s
 | 页数上限装不下全部证据 | 按目标保留主线证据，其余进备注/备用页/qa_prep，取舍表写理由 |
 | 证据撑不起要求的结论强度 | 降低措辞强度，在 exceptions 写明"材料仅支持到 X" |
 | 模板缺版式 | 换最接近版式；`image_box`/`table_box` 显式定位并记录 |
-| soffice 失败 | 换 profile 目录重试一次；仍失败记录原因，status=partial |
+| soffice 缺失/超时/崩溃 | render 已自动换 profile 重试；仍失败 → status=partial，render.json 的 errors 进 exceptions.run_failures，不声称有预览 |
 | 没有 python-pptx | 正常，pptx_kit.py 纯标准库 |

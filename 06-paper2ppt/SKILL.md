@@ -40,17 +40,17 @@ description: 论文转学术 PPT（轻量版）。当任务给出论文/研究�
 7. **图表素材**（2–4 次）：需要的原图用 `python3 $K figcrop paper.pdf 页 "Fig. 2" $WORK_DIR/fig2.png`（按题注裁剪，打印裁剪区内文字供核对：
    应是坐标轴/图例/题注，出现整段正文说明裁错了，改用 `pdfimages -list` 找原始位图或换图）。表格优先做成**原生表格**（spec 的 `table`），
    数值逐格从 paper.txt 抄，表头保留单位。示意图/流程图只能当示意，不能当实验数据讲。没法取到的图写进 exceptions，不画替代曲线。
+   figcrop 裁进了正文段落 → `pdfimages -png -f 页 -l 页 paper.pdf $WORK_DIR/pimg` 取原始位图（`pdfimages -list` 看尺寸），对上题注再用。
 8. **写 spec 并构建**（2–4 次）：写 `$WORK_DIR/spec.json`（格式见 `python3 $K` 的帮助），`"out": "$OUT_DIR/presentation.pptx"`（工作单另有文件名就用它），
    `python3 $K build $WORK_DIR/spec.json | tee $WORK_DIR/build.log`。内容/图/表页加 `"source_note": "Paper Fig. 2, p.5"`（页上可见的出处），spec 顶层加 `"min_pt": 18`。
-   build 每页打印 `placed slide N: body->ph obj idx1 ...`：核对正文进了大占位符。**每条 WARN 都要处理**：溢出→删字/拆页/换大版式（`font_size` 不低于字号阶梯）；
-   没有占位符→换版式；replace 未命中→查原文。重跑直到无 WARN 或把剩余 WARN 写进 exceptions。
-9. **渲染**（2 次，限时）：`cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_profile --convert-to pdf presentation.pptx`
-   （"Task policy set failed" 无害）；`mkdir -p preview && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide`；`pdffonts presentation.pdf` 记录实际字体。
-   失败就如实记录原因（不声称有预览）。
-10. **证据映射 + 记录 + 自检**（3–4 次）：写 `content_map.json`（每页一行，见下）、`change_log.md`、填 result.json；
-    `python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template <模板路径> --min-pt <下限> [--slides N] [--source $WORK_DIR/start_text.txt]`
-    （有旧 deck 才加 --source；它会抓"只在旧 deck 里出现的数字"和"图号与论文题注内容不符"）。checker 同时写 `$OUT_DIR/slide_audit.md`
-    （逐页版式、占位符、散装框、图片比例误差、最小字号、备注、PDF 丢字），这就是逐页偏差记录。FAIL 必须修，最多两轮。
+   build 每页打印 `placed slide N: body->ph obj idx1 ...`：核对正文进了大占位符。**WARN 是提示：最多重建 2 轮**（删字/拆页/换版式），剩下的写进 uncertainty：溢出→删字/拆页/换大版式（`font_size` 不低于字号阶梯）；
+   没有占位符→换版式；replace 未命中→查原文。两轮后剩余的 WARN 写进 uncertainty。
+9. **渲染**（1 次）：`python3 $K render $OUT_DIR/presentation.pptx` → `presentation.pdf`、`preview/slide-*.png`、pdffonts 实测、`render.json`（soffice 两次尝试各限 120 s、换 profile；pdftoppm/pdftocairo 限时；找不到 LibreOffice 也不报错，照实写进 render.json 的 errors）。
+   render 的 status 不是 `rendered` → 不声称有预览，result 的 status 写 partial，原因进 exceptions.run_failures。能看图就打开 2–3 张 PNG 目检。
+10. **记录 + 组装 + 自检**（2–3 次）：写 `content_map.json`（每页一行，见下）、`change_log.md`、`plan.md` 复制到 `$OUT_DIR`。
+   把已知事实写进 `$WORK_DIR/facts.json`（只写有的：`content_map`、`compliance_checks`、`exceptions`{material_missing, undecidable, run_failures}、`uncertainty`、`change_log`、`status_reasons`）。然后 `python3 $SKILL_DIR/scripts/check_result.py --assemble` → 按含义填满 contract 的**每一个**键（任何键名、中文名、嵌套子字段；facts 里同名键原样采用；缺的文件自动跳过，不留骨架字样），再跑
+   `python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template <模板路径> --min-pt <下限> [--slides N] [--source $WORK_DIR/start_text.txt]`
+   有旧 deck 才加 --source（抓只在旧 deck 出现的数字、图号与题注不符）。checker 还查主张标题（"Results" 这类话题标题报 WARN）和页型覆盖，并写 `$OUT_DIR/slide_audit.md`（逐页偏差记录）。FAIL 修，最多两轮；修不了的（没有渲染器、材料缺失）就 status=partial 写明原因。build/checker 的 WARN 是提示，不要为清 WARN 反复重建。
 
 ## 内容规则（每条都针对一种已知失败）
 1. **主线不是目录**：页序按"问题→方法→证据→结论"，不是按论文章节逐段搬；Related Work 最多 1 页或并入动机。
@@ -73,6 +73,7 @@ content_map 每行：`{"slide": 3, "role": "结果", "claim": "标题原文", "e
 "notes_summary": "...", "confidence": "high|medium|low", "uncertainty": "..."}`。
 
 ## result.json 映射（任何键名风格都按含义对应；嵌套字段按子字段填）
+实际写入用 `check_result.py --assemble`（它按含义映射任意键名）；下面是各键应含的内容，写进 facts.json 的同名键会原样采用。
 - 演示文件 / editable_source / 可编辑演示文件 → `{"pptx": "/app/output/presentation.pptx", "spec": ".../spec.json", "rebuild": "命令", "slides": N, "layouts_used": [...]}`
 - 导出 / export_artifact / 渲染 → `{"pdf": ".../presentation.pdf", "png": [...], "pages": N, "renderer": "LibreOffice 版本", "fonts": "pdffonts 实测", "substitutions": [...], "slide_audit": ".../slide_audit.md"}`
 - 证据映射 / content_map / 页级证据映射 → content_map 内联列表 + 文件路径
@@ -86,7 +87,7 @@ content_map 每行：`{"slide": 3, "role": "结果", "claim": "标题原文", "e
 | 情况 | 做法 |
 |---|---|
 | 没有 python-pptx | 正常，pptx_kit.py 纯标准库 |
-| soffice 超时/崩溃 | 换新 profile 目录重试一次；仍失败 → 记录，status=partial |
+| soffice 缺失/超时/崩溃 | render 已自动换 profile 重试；仍失败 → status=partial，render.json 的 errors 进 exceptions.run_failures，不声称有预览 |
 | 模板缺某版式/占位符 | 换最接近的版式；仍放不下 → 用 `image_box`/`table_box` 显式定位，并在 compliance 里说明 |
 | 页数超限 | 合并支撑性细节、移到备注，绝不删主线必需页 |
 | 中文字体缺失 | 不改模板字体；在 render 记录写实际替代字体（pdffonts） |

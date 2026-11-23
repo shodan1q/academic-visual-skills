@@ -21,8 +21,8 @@ pdftotext -layout /input/paper.pdf $WORK_DIR/paper.txt
 python3 $K inspect /input/target-template.pptx
 python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png
 python3 $K build $WORK_DIR/spec.json      # 第 1 次：封面标题 3 行溢出 WARN → 缩短标题 → 第 2 次无 WARN
-cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_profile --convert-to pdf presentation.pptx
-mkdir -p preview && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide
+python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+python3 $SKILL_DIR/scripts/check_result.py --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
 # 写 qa_prep.md、content_map.json、change_log.md，填 result.json
 python3 $SKILL_DIR/scripts/check_result.py --source $WORK_DIR/paper.txt --template /input/target-template.pptx --slides 5
 ```

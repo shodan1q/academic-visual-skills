@@ -44,3 +44,11 @@
 - 图号核对靠题注文字重合度，题注很短（"Fig. 2. Results"）时判不出；数字核对是字符串级，单位换算后的数会被当成"论文里没有"。
 - 图表对象/SmartArt 只能降级为图片或原生表格。
 - `pptx_kit.py` 约 400 行、`check_result.py` 约 380 行，超过"每个脚本 ≤ 200 行"的内部目标；为单文件零依赖没有再拆。
+
+## 版本 1.2：运行稳健性（内部记录，未做基础 Agent 对照）
+针对四类会让运行时 Agent 交出残缺结果的情况：
+- result.json 按固定键名组装，而 contract 用了别的键名 → 骨架文字残留、checker FAIL。现在 `check_result.py --assemble` 按键名与描述的含义映射（中英文、嵌套子字段、JSON schema / 列表 / 字典三种 contract 写法都在合成用例上试过）。
+- 可选文件缺失导致组装脚本崩溃 → assemble 对每个文件做存在判断，缺了就跳过。
+- 为清掉无法满足的 WARN 反复重建 → SKILL 规定 WARN 只是提示，最多重建 2 轮，剩下的写进 uncertainty。
+- 没有渲染器 → `pptx_kit.py render` 自动探测、两次尝试、限时，失败写 render.json；status=partial 时 checker 把渲染类问题降为 WARN。
+- 复测 rt08：build → render → facts.json → assemble → checker PASS，result.json 的 5 个 contract 键全部按含义填好。

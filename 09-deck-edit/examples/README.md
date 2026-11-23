@@ -23,8 +23,8 @@ python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png
 python3 $K build $WORK_DIR/spec_v1.json
 python3 $K inspect $WORK_DIR/v1.pptx --full > $WORK_DIR/v1.txt; diff -u $WORK_DIR/v0.txt $WORK_DIR/v1.txt > $WORK_DIR/diff_v0_v1.txt
 cp $WORK_DIR/v1.pptx $OUT_DIR/presentation.pptx
-cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_profile --convert-to pdf presentation.pptx
-mkdir -p preview versions && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide; pdffonts presentation.pdf
+python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+python3 $SKILL_DIR/scripts/check_result.py --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
 python3 $SKILL_DIR/scripts/check_result.py --template /input/starting-deck.pptx --slides 6 --source $WORK_DIR/paper.txt $WORK_DIR/v0.txt
 ```
 `spec_v1.json`（示例）：

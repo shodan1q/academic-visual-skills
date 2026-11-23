@@ -29,8 +29,8 @@ python3 $K inspect /input/target-template.pptx                    # 4 版式与�
 # 5 写 storyline.md / plan.md（问题→方法→Table 1→Fig. 2→结论与局限）
 python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png  # 6 原图
 python3 $K build $WORK_DIR/spec.json                              # 7 建页（无 WARN）
-cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_profile --convert-to pdf presentation.pptx
-mkdir -p preview && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide; pdffonts presentation.pdf   # 8 导出
+python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+python3 $SKILL_DIR/scripts/check_result.py --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
 python3 $SKILL_DIR/scripts/check_result.py --source $WORK_DIR/paper.txt --template /input/target-template.pptx --slides 6   # 9 自检
 ```
 

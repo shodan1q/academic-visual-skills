@@ -18,7 +18,8 @@ pdftotext -layout /input/paper.pdf $WORK_DIR/paper.txt
 python3 $K inspect /input/starting-deck.pptx --full > $WORK_DIR/start_text.txt   # 只有 adapt 需要
 # 写 corrections.md（deck 对论文）、plan.md（逐页主张与证据）、spec.json
 python3 $K build $WORK_DIR/spec.json | tee $WORK_DIR/build.log   # 每页打印 placed 行：内容进了哪个占位符
-cd $OUT_DIR && timeout 120 soffice --headless --convert-to pdf presentation.pptx && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide
+python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+python3 $C --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
 python3 $C --template /input/target-template.pptx --paper $WORK_DIR/paper.txt --source $WORK_DIR/start_text.txt --slides 10 --min-pt 18
 ```
 
@@ -26,8 +27,8 @@ python3 $C --template /input/target-template.pptx --paper $WORK_DIR/paper.txt --
 | 文件 | 作用 |
 |---|---|
 | `SKILL.md` | 运行时流程：模板结构 → 事实对账 → 页级大纲 → spec 构建 → 导出 → 审计与自检 |
-| `scripts/pptx_kit.py` | 纯标准库。`inspect` 列版式/占位符/主题/母版字号与旧 deck 每页内容；`build` 在目标模板上建页（占位符继承、正文选最大占位符、`source_note` 进来源占位符、图注进图片版式的图注占位符、等比图片、三线表、页脚页码、备注、溢出与字号下限 WARN、包完整性）；`figcrop` 按题注从论文 PDF 裁图 |
-| `scripts/check_result.py` | 纯标准库。`--init` 写骨架；检查 contract 字段/status/文件/页数/提示文字/备注/PDF 页数/渲染丢字；`--template` 逐字节比对母版版式主题；`--paper` 查"只在旧 deck 出现的数字"和"图号与题注内容不符"；图片拉伸；`--min-pt` 字号下限；缺页码；散装文本框；build.log 未处理的 WARN；写 `slide_audit.md` |
+| `scripts/pptx_kit.py` | 纯标准库。`inspect` 列版式/占位符/主题/母版字号与旧 deck 每页内容；`build` 在目标模板上建页（占位符继承、正文选最大占位符、`source_note` 进来源占位符、图注进图片版式的图注占位符、等比图片、三线表、页脚页码、备注、溢出与字号下限 WARN、包完整性）；`figcrop` 按题注从论文 PDF 裁图；`render` 调 LibreOffice（两次尝试、各限 120 s）出 PDF + PNG + pdffonts，并写 `render.json`，找不到渲染器也不报错 |
+| `scripts/check_result.py` | 纯标准库。`--init` 写骨架；检查 contract 字段/status/文件/页数/提示文字/备注/PDF 页数/渲染丢字；`--template` 逐字节比对母版版式主题；`--paper` 查"只在旧 deck 出现的数字"和"图号与题注内容不符"；图片拉伸；`--min-pt` 字号下限；缺页码；散装文本框；build.log 未处理的 WARN；写 `slide_audit.md`；`--assemble` 读 facts.json 与磁盘文件，按含义填满 contract 的每个键（任意键名/中文/嵌套），缺文件跳过；`--baseline v0.pptx --keep-map 新:旧` 比对保留页并写 `version_diff.md`；`--paper-advisory` 把论文不一致降为建议；没有渲染器且 status=partial 时渲染类问题降为 WARN |
 | `resources/checklist.md` | 交付前逐项核对（对应 compliance_checks） |
 | `resources/pptx_xml.md` | kit 做不到时的 zipfile/XML 字符串编辑配方与导出核对命令 |
 | `examples/README.md` | 合成最小示例（标注"示例"） |
@@ -49,4 +50,4 @@ Python 3.8+ 标准库（必需）；LibreOffice（导出）、poppler（pdftotex
 - 不修复模板本身的问题（缺版式、缺字体），只报告。
 
 ## 维护
-版本 1.1（2026-11）。改脚本后用 examples/README.md 的流程回归：build 的 placed 行正确、无未处理 WARN、soffice 导出、checker（含 `--template --paper`）PASS。
+版本 1.2（2026-11）。改脚本后用 examples/README.md 的流程回归：build 的 placed 行正确、无未处理 WARN、render 产出 PDF/PNG（或照实记录失败）、checker（含 `--template --paper`）PASS。
