@@ -3,7 +3,7 @@
 
 Usage: python3 check_result.py --init                       # skeleton result.json (every contract field, status partial)
        python3 check_result.py --assemble [facts.json]       # result.json with EVERY contract key filled by meaning from facts + files
-       ... [--baseline v0.pptx --keep-map 1:1,2:2] [--paper-advisory]   # preserved-slide text check + version_diff.md; paper mismatches as proposals
+       ... [--baseline v0.pptx --keep-map 1:1,2:2 --edit-map 3:3] [--paper-advisory]   # preserved-slide check + per-slide before/after version_diff.md
        python3 check_result.py [--case X] [--out OUT_DIR/result.json] [--deck D.pptx] [--source start_text.txt ...]
                               [--paper paper.txt] [--preserved 2,5] [--slides N | --max-slides N] [--template target-template.pptx] [--min-pt 18]
 Defaults: $CASE_JSON|/input/case.json, $OUT_DIR|/app/output, deck = newest *.pptx in OUT_DIR, source = $WORK_DIR/*.txt.
@@ -340,6 +340,10 @@ def assemble(case, out_path, facts_path):
              ("plan", "plan.md"), ("spec", "spec.json"), ("corrections", "corrections.md"), ("version_diff", "version_diff.md"), ("render_record", "render.json"))
              if os.path.exists(os.path.join(od, f))}
     files.update({k: v for k, v in (fx.get("files") or {}).items() if isinstance(v, str) and os.path.exists(v)})
+    vers = sorted(glob.glob(os.path.join(od, "versions", "*")))
+    specs = [v for v in vers if re.search(r"spec[^/]*\.json$", v)] or sorted(glob.glob(os.path.join(os.environ.get("WORK_DIR", "/app/work"), "spec*.json")), key=os.path.getmtime)
+    if specs and "spec" not in files:
+        files["spec"] = specs[-1]
     cm = fx.get("content_map") or safe(lambda: rdj(files.get("content_map"))) or [{"slide": i, "title": t.split("\n")[0][:90]} for i, (t, _) in enumerate(sl, 1)]
     lines = lambda k: [l.strip("-* ").strip() for l in safe(lambda: Path(files[k]).read_text(encoding="utf-8").splitlines(), []) if l.strip("-*# ").strip()]
     errs = list(rj.get("errors") or [])
@@ -348,8 +352,8 @@ def assemble(case, out_path, facts_path):
         exc["run_failures"] = errs
     st = fx.get("status") or ("failed" if not deck else "complete" if pdf and png else "partial")
     val = {"case_id": (case.get("case_id") or case.get("caseId") or case.get("id")) if isinstance(case, dict) else None,
-           "editable": {"pptx": deck, "slides": len(sl), "spec": files.get("spec") or fx.get("spec"), "rebuild": fx.get("rebuild") or "python3 pptx_kit.py build spec.json",
-                        "template": fx.get("template"), "slide_titles": [t.split("\n")[0][:90] for t, _ in sl]},
+           "editable": {"pptx": deck, "slides": len(sl), "spec": files.get("spec") or fx.get("spec"), "rebuild": fx.get("rebuild") or "python3 pptx_kit.py build %s" % (files.get("spec") or "spec.json"),
+                        "template": fx.get("template"), "versions": fx.get("versions") or vers, "slide_titles": [t.split("\n")[0][:90] for t, _ in sl]},
            "render": {"pptx": deck, "pdf": pdf, "png": png, "pages": rj.get("pages"), "renderer": rj.get("renderer") or "none (see run_failures)",
                       "fonts": rj.get("fonts"), "substitutions": rj.get("substitutions"), "render_record": files.get("render_record"), "slide_audit": files.get("slide_audit"),
                       "change_log": fx.get("change_log") or lines("change_log") or ["single build, no revisions"]},
@@ -400,14 +404,34 @@ def assemble(case, out_path, facts_path):
     print("assembled %s: %d contract fields, status=%s; run the checker next" % (out_path, len(fields(contract)), st))
 
 
-def baseline_check(deck, base, kmap, out_md, fails, warns):
-    """Preserved slides must be text-identical to the baseline deck; writes a per-slide version diff."""
+def baseline_check(deck, base, kmap, out_md, fails, warns, emap=None):
+    """Preserved slides must be text-identical to the baseline deck; every other slide gets a before/after line diff
+    against its baseline slide: --edit-map new:old if given, else the most similar unused baseline slide (word overlap +
+    position, one-to-one) or "new". Writes a per-slide version diff (version_diff.md)."""
     a, b = slides_of(deck), slides_of(base)
-    rows = []
+    rows, detail, emap = [], [], dict(emap or {})
+    ln = lambda t: [x.strip() for x in t.split("\n") if x.strip()]
+    wd = lambda t: set(re.findall(r"\w[\w.%/+-]*", t.lower()))
+    free_new = [i for i in range(1, len(a) + 1) if i not in kmap and i not in emap]
+    free_old = [j for j in range(1, len(b) + 1) if j not in set(kmap.values()) | set(emap.values())]
+    pairs = sorted(((len(wd(a[i - 1][0]) & wd(b[j - 1][0])) / float(len(wd(a[i - 1][0]) | wd(b[j - 1][0])) or 1) + 0.1 / (1 + abs(i - j)), i, j)
+                    for i in free_new for j in free_old), reverse=True)
+    for r, i, j in pairs:
+        if r >= 0.3 and i not in emap and j not in emap.values():
+            emap[i] = j
     for i, (t, n) in enumerate(a, 1):
         o = kmap.get(i)
-        if o is None:
-            rows.append("| %d | - | new or edited | %s |" % (i, t.split("\n")[0][:60]))
+        if o is None:  # edited (diff against its baseline slide) or new
+            j = emap.get(i) if emap.get(i, 0) <= len(b) else None
+            ttl = (ln(t) or [""])[0][:60]
+            if j is None:
+                rows.append("| %d | - | new slide | %s |" % (i, ttl))
+                detail.append("### slide %d (new)\n" % i + "\n".join("+ " + x[:110] for x in ln(t)[:12]) + "\n")
+                continue
+            bt, bn = b[j - 1]
+            minus, plus = [x for x in ln(bt) if x not in ln(t)], [x for x in ln(t) if x not in ln(bt)]
+            rows.append("| %d | %d | edited (%d lines out, %d in%s) | %s |" % (i, j, len(minus), len(plus), ", notes changed" if bn != n else "", ttl))
+            detail.append("### slide %d (from baseline slide %d)\n" % (i, j) + "\n".join(["- " + x[:110] for x in minus[:10]] + ["+ " + x[:110] for x in plus[:10]]) + "\n")
             continue
         if o > len(b):
             fails.append("keep-map: baseline has no slide %d" % o)
@@ -418,13 +442,16 @@ def baseline_check(deck, base, kmap, out_md, fails, warns):
             fails.append("preserved slide %d (baseline %d) text changed: %s" % (i, o, dl))
             rows.append("| %d | %d | TEXT CHANGED | %s |" % (i, o, "; ".join(dl)[:80]))
         else:
-            rows.append("| %d | %d | identical text%s | |" % (i, o, "" if bn == n else ", notes changed"))
+            rows.append("| %d | %d | kept, identical text%s | |" % (i, o, "" if bn == n else ", notes changed"))
             if bn != n:
                 warns.append("preserved slide %d: speaker notes differ from baseline slide %d (allowed only if the instruction asks)" % (i, o))
-    gone = sorted(set(range(1, len(b) + 1)) - set(kmap.values()))
-    Path(out_md).write_text("# Version diff vs %s (written by check_result.py)\n\nbaseline slides not kept as-is: %s\n\n| new slide | baseline slide | status | first changed lines |\n|---|---|---|---|\n%s\n"
-                            % (os.path.basename(base), gone or "none", "\n".join(rows)), encoding="utf-8")
-    print("baseline: %d preserved slides compared; diff written to %s" % (len(kmap), out_md))
+    mapped = set(kmap.values()) | {int(m) for m in re.findall(r"\| \d+ \| (\d+) \| edited", "\n".join(rows))}
+    gone = sorted(set(range(1, len(b) + 1)) - mapped)
+    Path(out_md).write_text("# Version diff vs %s (written by check_result.py)\n\n%d -> %d slides. Kept unchanged: %s. Baseline slides deleted: %s.\n\n"
+                            "| new slide | baseline slide | status | title / first changed line |\n|---|---|---|---|\n%s\n\n## Line diff per edited/new slide (- before, + after)\n\n%s"
+                            % (os.path.basename(base), len(b), len(a), sorted(kmap) or "none", ["%d: %s" % (g, (ln(b[g - 1][0]) or [""])[0][:40]) for g in gone] or "none",
+                               "\n".join(rows), "\n".join(detail) or "(none)\n"), encoding="utf-8")
+    print("baseline: %d preserved slides compared, %d edited/new slides diffed; written to %s" % (len(kmap), len(a) - len(kmap), out_md))
 
 
 GENERIC = re.compile(r"^\s*(results?|methods?|methodology|introduction|background|conclusions?|discussion|summary|outline|experiments?|结果|方法|背景|引言|结论|讨论|总结|实验)\s*$", re.I)
@@ -442,6 +469,46 @@ def storyline_check(sl, res, warns):
     miss = [k for k, rx in need.items() if not re.search(rx, blob)]
     if miss and len(sl) >= 5:
         warns.append("page types not found in the deck/content map: %s (cover -> problem -> method -> results -> conclusion/limitations)" % miss)
+
+
+CHECKS = [  # (check name, regex over FAIL/WARN messages, applies-if, basis when nothing matched)
+    ("slide count", r"slides, work order requires|slides, limit is", lambda a: a.slides or a.max_slides, "deck slide count = required"),
+    ("template inheritance (masters/layouts/theme byte-identical)", r"template parts|layouts that are not in the template|free text boxes", lambda a: a.template, "parts compared with the template file"),
+    ("preserved slides unchanged", r"preserved slide \d|keep-map", lambda a: a.baseline and a.keep_map, "version_diff.md"),
+    ("numbers traced to source text", r"numbers on slides|decimal numbers|integers on slides|neither paper nor deck|carry numbers", lambda a: True, "every number on the slides found in the source/paper text"),
+    ("figure/table labels match paper captions", r"caption|label", lambda a: a.paper, "slide Fig./Table labels compared with the paper caption index"),
+    ("speaker notes", r"speaker notes|notes mostly repeat", lambda a: True, "every slide has notes"),
+    ("PDF/PNG export matches deck", r"\[render\]|PDF|PNG|rendered PDF", lambda a: True, "PDF page count = slide count; PNG previews present"),
+    ("font size floor", r"pt is below|below --min-pt|table text|explicit", lambda a: a.min_pt, "no explicit body size below the floor"),
+    ("contract fields and status", r"contract field|sub-field|placeholder text|^status|case_id is|listed file", lambda a: True, "all contract fields filled, one-word status")]
+
+
+def record_checks(out, res, a, fails, warns):
+    """Write the checker's own verdicts into result.json: compliance rows (by=check_result.py, replaced on every run) + checker_record."""
+    import datetime
+    rows = []
+    for name, rx, applies, basis in CHECKS:
+        if not applies(a):
+            continue
+        f = [m for m in fails if re.search(rx, m, re.I)]
+        w = [m for m in warns if re.search(rx, m, re.I)]
+        rows.append({"check": name, "result": "FAIL" if f else "WARN" if w else "PASS", "basis": ("; ".join((f + w)[:2])[:300] if f or w else basis), "by": "check_result.py"})
+    done = res.get("instructions_done")
+    if isinstance(done, dict):
+        rows += [{"check": "instruction %s executed" % k, "result": "PASS" if v and not re.search(r"not done|未执行|skipped|FAIL", json.dumps(v, ensure_ascii=False), re.I) else "WARN",
+                  "basis": (v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))[:200], "by": "check_result.py"} for k, v in done.items()]
+    key = next((k for k in res if re.search(r"compliance|check|verif|validation|合规|检查|核对|校验", k, re.I) and k != "checker_record"), "compliance_checks")
+    cur = res.get(key)
+    if isinstance(cur, list):
+        res[key] = [r for r in cur if not (isinstance(r, dict) and r.get("by") == "check_result.py")] + rows
+    elif isinstance(cur, dict):
+        cur["automated_checks"] = rows
+    else:
+        res[key] = ([{"check": "agent note", "result": "INFO", "basis": str(cur)}] if cur and not empty(cur) else []) + rows
+    res["checker_record"] = {"command": "python3 check_result.py " + " ".join(sys.argv[1:]), "verdict": "FAIL" if fails else "PASS",
+                             "fails": fails, "warns": warns, "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    Path(out).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("result.json: %d check rows written to '%s' + checker_record" % (len(rows), key))
 
 
 def main():
@@ -462,6 +529,7 @@ def main():
     ap.add_argument("--paper-advisory", action="store_true", help="paper mismatches are proposals (WARN), e.g. deck-edit tasks that did not ask for fact-checking")
     ap.add_argument("--baseline", help="baseline deck (v0) for preserved-slide checks")
     ap.add_argument("--keep-map", help="new:old pairs of preserved slides, e.g. 1:1,2:2,9:8")
+    ap.add_argument("--edit-map", help="new:old pairs of edited slides for the before/after diff, e.g. 3:3,6:6,10:8 (unlisted: matched by similarity)")
     a = ap.parse_args()
     case = load(a.case)
     if a.assemble is not None:
@@ -519,7 +587,8 @@ def main():
         kmap = {int(x): int(y) for x, y in re.findall(r"(\d+)\s*:\s*(\d+)", a.keep_map or "")}
         pres = {int(v) for v in re.findall(r"\d+", a.preserved or "")} | set(kmap)
         if a.baseline and kmap:
-            baseline_check(d, a.baseline, kmap, os.path.join(os.path.dirname(a.out), "version_diff.md"), fails, warns)
+            baseline_check(d, a.baseline, kmap, os.path.join(os.path.dirname(a.out), "version_diff.md"), fails, warns,
+                           {int(x): int(y) for x, y in re.findall(r"(\d+)\s*:\s*(\d+)", a.edit_map or "")})
         storyline_check(sl, res, warns)
         if a.paper_advisory:
             pres |= set(range(1, len(sl) + 1))
@@ -542,6 +611,10 @@ def main():
     if st == "complete" and fails:
         fails.append("status 'complete' while the problems above remain -> fix them or use 'partial'")
     print("\n".join(["WARN: " + w for w in warns] + ["FAIL: " + f for f in fails]))
+    try:
+        record_checks(a.out, res, a, fails, warns)
+    except Exception as e:  # recording must never break the check itself
+        print("WARN: could not write check rows into result.json: %s" % e)
     if fails:
         return 1
     print("PASS: case_id ok, %d contract fields filled, status=%s" % (len(spec), raw))

@@ -1,0 +1,353 @@
+{
+ "kind": "synthetic deck-edit case with page-level gold standard (example, not a formal case)",
+ "how_to_rebuild_inputs": "starting-deck.pptx = pptx_kit.py build of starting_deck_slides on any 16:9 template with cover + title/content(+source note) layouts; paper.pdf = paper_facts text with Fig. 1-4 as raster images and Tables 1-2 as text (any word processor). Binary files are not shipped.",
+ "case_json": {
+  "case_id": "SIM09-CePt-review-edit",
+  "task": "Revise the group-meeting deck starting-deck.pptx into a 10-minute version for an internal project review panel, following artifacts/slide-workorder.json. The paper is the factual source.",
+  "material": "material.json",
+  "output_contract": [
+   "case_id",
+   "status",
+   "editable_source",
+   "export_artifact",
+   "content_map",
+   "compliance_checks",
+   "exceptions"
+  ]
+ },
+ "slide_workorder": {
+  "mode": "edit",
+  "audience": "internal project review panel (chemists, not catalysis specialists)",
+  "duration_min": 10,
+  "total_slides": 10,
+  "language": "English, except where an instruction asks otherwise",
+  "template_inheritance": "keep the masters, layouts, theme and footer of starting-deck.pptx (same family as target-template.pptx); do not restyle",
+  "source_preservation": "Slides 1, 2 and 4 must stay exactly as they are (text, table, notes). Do not change any slide that no instruction names.",
+  "min_body_pt": 18,
+  "notes_required": "every edited or new slide needs speaker notes",
+  "edits": [
+   "E1: Slide 3 (Methods) is overloaded. Compress it to at most 4 bullets that a reviewer needs; keep numbers exactly as in the paper.",
+   "E2: Slide 6 (Stability): replace the text-only slide by the paper's stability figure with a one-sentence claim title, and check the retention number against the paper.",
+   "E3: Slide 7 (Mechanism) is a pasted paragraph. Rewrite it as at most 4 bullets; keep the paper's hedging (the assignment is tentative).",
+   "E4: Insert a new slide right after the mechanism slide that shows Table 2 of the paper as an editable table.",
+   "E5: Check every number and figure/table label on slides 5-7 against the paper and correct any mismatch; log each correction.",
+   "E6: Move the Limitations slide before the Conclusions slide and delete the Acknowledgements slide.",
+   "E7: The panel includes two Chinese-speaking members: give the Conclusions slide in Chinese, keeping chemical formulas, units and numbers unchanged."
+  ],
+  "deliverables": [
+   "presentation.pptx",
+   "presentation.pdf",
+   "change log with rollback",
+   "slide-level claim-source map",
+   "time plan"
+  ]
+ },
+ "starting_deck_slides": [
+  {
+   "layout": "PKU-Cover",
+   "title": "Ce-doped Pt/Al2O3 for low-temperature CO oxidation",
+   "subtitle": [
+    "L. Zhang, M. Wang, Y. Chen",
+    "Group meeting, October 2026"
+   ],
+   "notes": "Introduce the paper: trace Ce lowers T50 by 42 C."
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Why Pt/Al2O3 fails at low temperature",
+   "body": [
+    "CO self-poisoning below 250 °C",
+    "Pt/CeO2 reaches T50 = 210 °C [3] but sinters above 700 °C [4]",
+    "Goal: keep Al2O3, add trace Ce"
+   ],
+   "source_note": "Paper Sec. 1",
+   "notes": "Motivation: poisoning; ceria works but sinters."
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Methods",
+   "body": [
+    "Sequential incipient wetness impregnation of gamma-Al2O3 (SBET = 182 m2 g-1)",
+    "Ce(NO3)3·6H2O, dried 110 °C 12 h, calcined 500 °C 4 h",
+    "Then Pt(NH3)4(NO3)2, 0.5 wt% Pt, calcined 400 °C 2 h",
+    "Ce loadings 0, 0.5, 1, 2 wt%",
+    "50 mg catalyst diluted with 200 mg SiC",
+    "1% CO + 1% O2 in N2, 50 mL min-1, GHSV 60,000 mL g-1 h-1",
+    "Ramp 2 °C min-1 from 120 to 350 °C, online GC",
+    "TEM n = 212, XPS Ce 3d, DRIFTS of CO at 30 °C"
+   ],
+   "notes": "Same Pt loading everywhere."
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Light-off temperatures",
+   "table": [
+    [
+     "Catalyst",
+     "T50 (°C)",
+     "T90 (°C)"
+    ],
+    [
+     "Pt/Al2O3",
+     "285",
+     "310"
+    ],
+    [
+     "0.5Ce-Pt/Al2O3",
+     "262",
+     "290"
+    ],
+    [
+     "1Ce-Pt/Al2O3",
+     "243",
+     "268"
+    ],
+    [
+     "2Ce-Pt/Al2O3",
+     "251",
+     "279"
+    ]
+   ],
+   "caption": "Table 1",
+   "source_note": "Paper Table 1",
+   "notes": "1 wt% is the optimum."
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Light-off curves",
+   "caption": "Fig. 3  Light-off curves",
+   "source_note": "Paper",
+   "notes": "All curves parallel.",
+   "image": "light-off curves without legend (deck screenshot of paper Fig. 2)"
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Stability",
+   "body": [
+    "1Ce-Pt/Al2O3 held at 250 °C for 100 h",
+    "96% of initial conversion retained",
+    "Unpromoted catalyst too inactive at 250 °C to test"
+   ],
+   "notes": "Stable."
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Mechanism",
+   "body": [
+    "DRIFTS shows the linear CO band on Pt shifting from 2085 to 2075 cm-1 at 1 wt% Ce, consistent with weaker CO binding, and XPS gives a Ce3+ fraction of 21.4% for 1Ce-Pt/Al2O3, so we attribute the activity to Ce3+-Pt interfacial sites, although this assignment is tentative because in-situ XAS was not performed."
+   ],
+   "notes": ""
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Conclusions",
+   "body": [
+    "Trace Ce (1 wt%) lowers T50 by 42 °C",
+    "94% of initial conversion kept over 100 h",
+    "Al2O3 support and Pt size unchanged"
+   ],
+   "notes": "Wrap up."
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Limitations",
+   "body": [
+    "Dry feed only (no H2O / SO2)",
+    "Stability beyond 100 h unknown",
+    "Mechanism not confirmed by operando methods"
+   ],
+   "notes": "Be honest about scope."
+  },
+  {
+   "layout": "PKU-Content",
+   "title": "Acknowledgements",
+   "body": [
+    "NSFC grant (synthetic)",
+    "Analytical centre for TEM/XPS"
+   ],
+   "notes": ""
+  }
+ ],
+ "paper_facts": {
+  "Sec. 2.1": "Ce 0, 0.5, 1, 2 wt% by sequential incipient wetness on gamma-Al2O3 (SBET = 182 m2 g-1); Pt 0.5 wt% in all samples; Ce calcined 500 °C 4 h, Pt 400 °C 2 h",
+  "Sec. 2.2": "50 mg catalyst + 200 mg SiC; 1% CO, 1% O2, N2; 50 mL min-1; GHSV 60,000 mL g-1 h-1; 2 °C min-1 from 120 to 350 °C; mean of two runs, repeats ≤ 3 °C",
+  "Table 1 (p.2)": [
+   [
+    "Catalyst",
+    "T50 (°C)",
+    "T90 (°C)"
+   ],
+   [
+    "Pt/Al2O3",
+    "285",
+    "310"
+   ],
+   [
+    "0.5Ce-Pt/Al2O3",
+    "262",
+    "290"
+   ],
+   [
+    "1Ce-Pt/Al2O3",
+    "243",
+    "268"
+   ],
+   [
+    "2Ce-Pt/Al2O3",
+    "251",
+    "279"
+   ]
+  ],
+  "Fig. 2 (p.3)": "CO conversion versus temperature (light-off curves) for the four catalysts",
+  "Sec. 3.2 / Fig. 3 (p.3-4)": "1Ce-Pt/Al2O3 at 250 °C for 100 h: conversion 91.5% -> 86.0%, i.e. 94.0% retained",
+  "Sec. 3.3": "CO band 2085 -> 2075 cm-1 at 1 wt% Ce; Ce3+ fraction 21.4%; assignment tentative (no in-situ XAS)",
+  "Table 2 (p.4)": [
+   [
+    "Catalyst",
+    "CO band (cm-1)",
+    "Ce3+ fraction (%)",
+    "Pt size (nm)"
+   ],
+   [
+    "Pt/Al2O3",
+    "2085",
+    "–",
+    "1.9 ± 0.5"
+   ],
+   [
+    "0.5Ce-Pt/Al2O3",
+    "2081",
+    "17.8",
+    "1.8 ± 0.4"
+   ],
+   [
+    "1Ce-Pt/Al2O3",
+    "2075",
+    "21.4",
+    "1.8 ± 0.4"
+   ],
+   [
+    "2Ce-Pt/Al2O3",
+    "2073",
+    "24.9",
+    "1.9 ± 0.5"
+   ]
+  ],
+  "Sec. 4": "dry feed only; stability beyond 100 h unknown; mechanism not confirmed by operando methods",
+  "Sec. 5": "1 wt% Ce lowers T50 by 42 °C and keeps 94.0% of initial conversion over 100 h at 250 °C"
+ },
+ "seeded_errors": [
+  {
+   "slide": 5,
+   "error": "caption 'Fig. 3  Light-off curves' - light-off curves are Fig. 2",
+   "instruction": "E5 (fix)"
+  },
+  {
+   "slide": 6,
+   "error": "'96% of initial conversion retained' - paper 94.0%",
+   "instruction": "E2/E5 (fix)"
+  },
+  {
+   "slide": 8,
+   "error": "'94%' rounds the paper's 94.0%",
+   "instruction": "outside E5 range; slide is rewritten under E7, so use 94.0%"
+  },
+  {
+   "slide": 7,
+   "error": "pasted paragraph, no notes",
+   "instruction": "E3"
+  }
+ ],
+ "gold_final_deck": [
+  {
+   "slide": 1,
+   "action": "keep 1",
+   "check": "text + notes identical to starting slide 1"
+  },
+  {
+   "slide": 2,
+   "action": "keep 2",
+   "check": "identical"
+  },
+  {
+   "slide": 3,
+   "action": "edit 3 (E1)",
+   "must": [
+    "≤ 4 bullets",
+    "0.5 wt%",
+    "60,000"
+   ],
+   "must_not": [
+    "any number not in Sec. 2"
+   ]
+  },
+  {
+   "slide": 4,
+   "action": "keep 4",
+   "check": "identical table"
+  },
+  {
+   "slide": 5,
+   "action": "edit 5 (E5)",
+   "must": [
+    "Fig. 2"
+   ],
+   "must_not": [
+    "Fig. 3"
+   ]
+  },
+  {
+   "slide": 6,
+   "action": "edit 6 (E2,E5)",
+   "must": [
+    "94.0%",
+    "paper Fig. 3 image (crop, not redrawn)",
+    "claim title"
+   ],
+   "must_not": [
+    "96%"
+   ]
+  },
+  {
+   "slide": 7,
+   "action": "edit 7 (E3)",
+   "must": [
+    "≤ 4 bullets",
+    "2085",
+    "2075",
+    "21.4",
+    "tentative wording"
+   ]
+  },
+  {
+   "slide": 8,
+   "action": "new (E4)",
+   "must": [
+    "native table, 5 rows x 4 columns = Table 2 cell by cell",
+    "source Table 2, p.4"
+   ]
+  },
+  {
+   "slide": 9,
+   "action": "keep 9 (moved by E6)",
+   "check": "identical to starting slide 9"
+  },
+  {
+   "slide": 10,
+   "action": "edit 8 (E6,E7)",
+   "must": [
+    "Chinese text",
+    "42 °C",
+    "94.0%",
+    "Al2O3 unchanged as formula"
+   ]
+  },
+  {
+   "deleted": "starting slide 10 (Acknowledgements)"
+  },
+  {
+   "deck": "exactly 10 slides; masters/layouts/theme byte-identical to starting-deck; notes on every edited/new slide; PDF 10 pages"
+  }
+ ],
+ "checker_call": "check_result.py --template starting-deck.pptx --slides 10 --paper paper.txt --min-pt 18 --source v0.txt --baseline v0.pptx --keep-map 1:1,2:2,4:4,9:9 --edit-map 3:3,5:5,6:6,7:7,10:8"
+}

@@ -4,15 +4,15 @@
   python3 pptx_kit.py inspect FILE.pptx [--full]  # theme fonts/colours, layouts+placeholders (inches), every slide's
                                                   # shapes by role (ph:title/ph:obj/text), table rows, pictures, notes
   python3 pptx_kit.py build SPEC.json     # write the deck, print per-slide summary + overflow/placeholder/integrity warnings
-  python3 pptx_kit.py figcrop paper.pdf PAGE "Fig. 2" /app/work/fig2.png [DPI]   # crop a figure/table by its caption (poppler)
-  python3 pptx_kit.py render /app/output/presentation.pptx   # soffice (2 tries, 120 s each) -> PDF, pdftoppm PNGs, pdffonts, render.json
+  python3 pptx_kit.py figcrop paper.pdf PAGE "Fig. 2" /app/work/fig2.png [DPI]   # crop a figure (caption left out, margins trimmed) or table by its caption
+  python3 pptx_kit.py render /app/output/presentation.pptx   # soffice (2 tries, 120 s each) -> PDF, 100 dpi PNGs, pdffonts, render.json
 
 SPEC = {"template": "template.pptx|.potx|starting_deck.pptx", "out": "/app/output/deck.pptx",
         "footer": "optional footer text", "date": "optional", "slide_numbers": true,
         "slides": [
           {"keep": 3, "replace": {"old text": "new text"}, "notes": "..."},     # reuse slide 3 of the input file
           {"layout": "Title and Content" or 2, "title": "claim sentence", "subtitle": "...",
-           "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words"], "body2": ["right column"],
+           "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words", "Al_{2}O_{3}, cm^{-1}"], "body2": ["right column"],
            "font_size": 20, "image": "/app/work/fig2.png", "image_box": [x, y, w, h], "caption": "Fig. 2 ...",
            "table": [["head", "head"], ["1.0", "2.0"]], "table_box": [x, y, w, h], "table_size": 14,
            "source_note": "Paper Sec. 3, Table 1, p.2",   # -> layout placeholder named Source/Note/Ref, else small textbox above footer
@@ -125,9 +125,17 @@ def inspect(path, full=False):
         print("   [notes] " + ((n if full else n[:160]).replace("\n", " / ") if n else "(none)"))
 
 def runs(text, sz=None):
-    segs = re.split(r"\*\*", str(text))
-    return "".join('<a:r><a:rPr lang="zh-CN" altLang="en-US"%s%s dirty="0"/><a:t>%s</a:t></a:r>' % (' sz="%d"' % (sz * 100) if sz else "", ' b="1"' if i % 2 else "", escape(g))
-                   for i, g in enumerate(segs) if g) or '<a:endParaRPr lang="zh-CN"/>'
+    """**bold**, H_{2}O subscript, cm^{-1} / Ce^{3+} superscript (the markup never reaches the slide text)."""
+    out, bold = [], False
+    for g in re.split(r"(\*\*|_\{[^{}]*\}|\^\{[^{}]*\})", str(text)):
+        if g == "**":
+            bold = not bold
+            continue
+        base = ' baseline="-25000"' if g.startswith("_{") else ' baseline="30000"' if g.startswith("^{") else ""
+        g = g[2:-1] if base else g
+        if g:
+            out.append('<a:r><a:rPr lang="zh-CN" altLang="en-US"%s%s%s dirty="0"/><a:t>%s</a:t></a:r>' % (' sz="%d"' % (sz * 100) if sz else "", ' b="1"' if bold else "", base, escape(g)))
+    return "".join(out) or '<a:endParaRPr lang="zh-CN"/>'
 
 def items_of(items):
     items = items.split("\n") if isinstance(items, str) else items
@@ -362,8 +370,9 @@ def build(spec_path):
     print("wrote %s (%d slides)" % (S["out"], len(S["slides"])))
 
 def figcrop(pdf, page, label, out, dpi=200):
-    """Crop a figure/table from a PDF page via pdftotext -bbox-layout + pdftoppm (poppler). Prints words inside the crop."""
-    import subprocess
+    """Crop a figure/table from a PDF page via pdftotext -bbox-layout + pdftoppm (poppler). Figures: the caption is left OUT of
+    the picture (put "Paper Fig. N ..." as the slide caption) and white margins are trimmed, so the figure fills its box."""
+    import subprocess, tempfile
     x = subprocess.run(["pdftotext", "-bbox-layout", "-f", str(page), "-l", str(page), pdf, "-"], capture_output=True, text=True, timeout=60).stdout
     pw, ph = [float(v) for v in re.search(r'<page width="([\d.]+)" height="([\d.]+)"', x).groups()]
     blocks = [([float(v) for v in m.group(1, 2, 3, 4)], " ".join(re.findall(r">([^<]+)</word>", m.group(5))), m.group(5).count("<line"))
@@ -377,19 +386,44 @@ def figcrop(pdf, page, label, out, dpi=200):
     twocol = widths[len(widths) // 2] < pw * 0.5  # median paragraph width -> two-column page
     lo, hi = (0, pw / 2) if twocol and x1 < pw * 0.55 else (pw / 2, pw) if twocol and x0 > pw * 0.45 else (0, pw)
     para = [b for b in blocks if b is not cap and b[0][2] > lo and b[0][0] < hi and b[0][2] - b[0][0] > (hi - lo) * 0.6]
-    if table:
+    lo, hi, k = max(lo, 18), min(hi, pw - 18), dpi / 72.0
+    def ink(l, t, r, bt):  # bounding box (pt) of non-white pixels in a region, from a 50 dpi greyscale render; None if blank
+        if bt - t < 6 or r - l < 6:
+            return None
+        try:
+            tmp, g = tempfile.mkdtemp(prefix="figcrop_"), 50 / 72.0
+            subprocess.run(["pdftoppm", "-gray", "-r", "50", "-f", str(page), "-l", str(page), "-x", str(int(l * g)), "-y", str(int(t * g)), "-W", str(max(1, int((r - l) * g))),
+                            "-H", str(max(1, int((bt - t) * g))), "-singlefile", pdf, os.path.join(tmp, "p")], check=True, timeout=60, capture_output=True)
+            d = open(os.path.join(tmp, "p.pgm"), "rb").read()
+            hd = re.match(rb"P5\s+(\d+)\s+(\d+)\s+(\d+)\s", d)
+            w, h, px = int(hd.group(1)), int(hd.group(2)), d[hd.end():]
+            rows = [i for i in range(h) if min(px[i * w:(i + 1) * w] or b"\xff") < 235]
+            cols = [j for j in range(w) if min(px[j::w][:h] or b"\xff") < 235]
+            return (l + cols[0] / g - 3, t + rows[0] / g - 3, l + (cols[-1] + 1) / g + 3, t + (rows[-1] + 1) / g + 3) if rows and cols else None
+        except Exception as e:
+            print("(margin trim skipped: %s)" % e)
+            return (l, t, r, bt)
+    if table:  # tables: caption above + rows below, kept together
         bot = min([b[0][1] for b in para if b[0][1] > y1 + 5] or [ph - 36]) - 2
         top, bot = y0 - 2, min(bot, max([b[0][3] for b in blocks if y1 <= b[0][1] < bot] or [bot]) + 4)
-    else:
-        top, bot = max([b[0][3] for b in para if b[0][3] <= y0 + 1] or [36]) + 2, y1 + 2
-    lo, hi = max(lo, 18), min(hi, pw - 18)
-    k = dpi / 72.0
-    subprocess.run(["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page), "-x", str(int(lo * k)), "-y", str(int(top * k)), "-W", str(int((hi - lo) * k)),
-                    "-H", str(int((bot - top) * k)), "-png", "-singlefile", pdf, out[:-4] if out.endswith(".png") else out], check=True, timeout=120)
-    inside = [b[1][:40] for b in blocks if b[0][1] >= top - 1 and b[0][3] <= bot + 1 and b[0][0] >= lo - 1 and b[0][2] <= hi + 1]
-    print("cropped page %s [%.0f,%.0f,%.0f,%.0f]pt -> %s\ntext inside crop (should be axis labels/legend/caption, not body paragraphs): %s" % (page, lo, top, hi, bot, out, inside[:12]))
+        box, where = ink(lo, top, hi, bot) or (lo, top, hi, bot), "table incl. its caption"
+    else:  # figure above its caption; if that region is blank, the caption sits above the figure
+        txt = [b for b in blocks if b is not cap and b[0][2] > lo and b[0][0] < hi and b[0][2] - b[0][0] > (hi - lo) * 0.4]  # body text, also short last lines
+        above = (lo, max([b[0][3] for b in txt if b[0][3] <= y0 + 1] or [36]) + 2, hi, y0 - 1)
+        below = (lo, y1 + 1, hi, min([b[0][1] for b in para if b[0][1] > y1 + 1] or [ph - 36]) - 2)
+        box, where = (ink(*above), "figure above caption (caption excluded)")
+        if not box:
+            box, where = ink(*below), "figure below caption (caption excluded)"
+        if not box:
+            box, where = (lo, above[1], hi, y1 + 2), "WARN no figure pixels next to the caption: the PDF may not contain this figure -> do not insert it, record a material gap"
+    l, t, r, bt = max(box[0], 0), max(box[1], 0), min(box[2], pw), min(box[3], ph)
+    subprocess.run(["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page), "-x", str(int(l * k)), "-y", str(int(t * k)), "-W", str(int((r - l) * k)),
+                    "-H", str(int((bt - t) * k)), "-png", "-singlefile", pdf, out[:-4] if out.endswith(".png") else out], check=True, timeout=120)
+    inside = [b[1][:40] for b in blocks if b[0][1] >= t - 1 and b[0][3] <= bt + 1 and b[0][0] >= l - 1 and b[0][2] <= r + 1]
+    print("cropped page %s [%.0f,%.0f,%.0f,%.0f]pt (%s) -> %s\ncaption: %s\ntext inside crop (axis labels/legend expected, not body paragraphs): %s"
+          % (page, l, t, r, bt, where, out, cap[1][:160], inside[:12]))
 
-def render(deck, dpi=50):
+def render(deck, dpi=100):
     """deck.pptx -> deck.pdf + preview/slide-N.png + render.json. Never raises: every failure is recorded honestly."""
     import glob, shutil, subprocess, tempfile
     out, stem = os.path.dirname(os.path.abspath(deck)), os.path.splitext(os.path.abspath(deck))[0]

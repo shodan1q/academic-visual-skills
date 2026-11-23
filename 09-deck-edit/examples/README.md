@@ -23,9 +23,11 @@ python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png
 python3 $K build $WORK_DIR/spec_v1.json
 python3 $K inspect $WORK_DIR/v1.pptx --full > $WORK_DIR/v1.txt; diff -u $WORK_DIR/v0.txt $WORK_DIR/v1.txt > $WORK_DIR/diff_v0_v1.txt
 cp $WORK_DIR/v1.pptx $OUT_DIR/presentation.pptx
-python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+python3 $K render $OUT_DIR/presentation.pptx      # PDF + 100 dpi PNG + pdffonts + render.json；无 LibreOffice 时照实记录
+python3 $K render $WORK_DIR/v0.pptx && mkdir -p $OUT_DIR/versions && cp $WORK_DIR/v0.pdf $OUT_DIR/versions/v0_before.pdf   # 改前导出，供逐页对照
 python3 $SKILL_DIR/scripts/check_result.py --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
-python3 $SKILL_DIR/scripts/check_result.py --template /input/starting-deck.pptx --slides 6 --source $WORK_DIR/paper.txt $WORK_DIR/v0.txt
+python3 $SKILL_DIR/scripts/check_result.py --template /input/starting-deck.pptx --slides 6 --paper $WORK_DIR/paper.txt --source $WORK_DIR/v0.txt \
+    --baseline $WORK_DIR/v0.pptx --keep-map 1:1,2:2,4:4 --edit-map 3:3,6:5   # 最后跑：判定行写回 result.json，version_diff.md 逐页改前/改后
 ```
 `spec_v1.json`（示例）：
 ```json
@@ -59,4 +61,4 @@ python3 $SKILL_DIR/scripts/check_result.py --template /input/starting-deck.pptx 
                        {"check": "保留页 1/2/4 文字未变", "result": "PASS", "basis": "diff 仅页码与计划内改动"}],
  "exceptions": {"material_gaps": [], "undecidable": [], "run_failures": []}}
 ```
-checker：`template: 14 master/layout/theme parts identical to starting-deck.pptx` / `PASS: case_id ok, 7 contract fields filled, status=complete`
+checker：`template: 14 master/layout/theme parts identical to starting-deck.pptx` / `result.json: 15 check rows written to 'compliance_checks' + checker_record` / `PASS: case_id ok, 7 contract fields filled, status=complete`

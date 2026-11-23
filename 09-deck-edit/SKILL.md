@@ -30,7 +30,7 @@ description: 学术 PPT 生成与编辑（轻量版）。当任务给出论文/�
    **只有**指令要求核对/更正事实（"check against the paper""fix numbers""与原文一致"之类），或某页按指令要从论文重新写，才在那一页用论文的值；
    其他不一致**不改**，在 corrections.md 和 change_log 里写成"建议更正（未执行：不在编辑指令内）"，并列入 exceptions.undecidable。保留页永远不改。
 5. **页级计划**（写 `$WORK_DIR/plan.md`）：`页 | 动作(keep/edit/new/delete) | 对应指令 E? | 叙事角色 | 主张句 | 来源（文件+Fig/Table/Sec/页码）| 视觉 | 秒数`。
-   - generate：问题→方法→结果（每组关键证据一页）→结论/局限；一页一个主张，正文 ≤ 5 条。
+   - generate：封面→问题/缺口→方法（≤ 4 条）→结果（每个关键图/表一页，标题写结论句，配原图裁剪或原生表格）→局限→结论；一页一个主张，正文 ≤ 5 条。
    - edit：从 v0 出发，**只动指令点名的页**；其余 `{"keep": i}` 原样保留。
    - adapt：每一页都迁到目标模板版式，内容不改。
    页数必须等于工作单总页数；秒数合计 ≈ 时长。
@@ -39,19 +39,25 @@ description: 学术 PPT 生成与编辑（轻量版）。当任务给出论文/�
 6. **执行编辑**（spec 写法，`template` 规则：edit → starting-deck；generate/adapt → target-template）：
    - 保留：`{"keep": 3}`；小改字：`{"keep": 3, "replace": {"原句": "新句"}, "notes": "..."}`（跨 run 也能替换；未命中会 WARN）。
    - 压缩/扩写/换受众/换语言：按版式新建该页（`layout` + `title` + `body`），**术语、符号、变量名、单位与论文一致**；换语言时专有名词首次出现保留原文括注。
-   - 插图表：有原始数值 → 原生 `table`（逐格照抄，表头带单位）；只有原图 → `python3 $K figcrop paper.pdf 页 "Fig. 3" $WORK_DIR/fig3.png` 后 `image`+`caption`
-     （写"原文 Fig. 3"）；没有数据也没有原图 → 不画，记 exception。**不重画没有数据支撑的曲线，不放占位图。**
+     新建页、表格、图注可写下标/上标：`Al_{2}O_{3}`、`cm^{-1}`、`Ce^{3+}`（幻灯片上显示为真下标/上标，文字检查照常）；edit 模式跟随初始稿写法（初始稿写纯文本 "Al2O3" 就保持一致）。`replace` 只接受纯文本。
+   - 插图表：有原始数值 → 原生 `table`（逐格照抄，表头带单位）；只有原图 → `python3 $K figcrop paper.pdf 页 "Fig. 3" $WORK_DIR/fig3.png` 后 `image`+`caption`。
+     figcrop 只裁图本身（题注不进图片、白边已去，图在页上更大），并打印论文题注原文 → `caption` 写 `"Paper Fig. 3: <题注要点>"`；
+     打印 `WARN no figure pixels` = PDF 里没有这张图 → 不放，记 material_gaps。没有数据也没有原图 → 不画。**不重画没有数据支撑的曲线，不放占位图。**
    - 调序/删页：spec 里的顺序就是新页序，没列的原页即删除（删前确认不是 source preservation 要求保留的页）。
 7. **构建一轮 = 一个版本**（每轮 2–3 次）：`spec` 存为 `$WORK_DIR/spec_v1.json`，`"out": "$WORK_DIR/v1.pptx"`；`python3 $K build $WORK_DIR/spec_vK.json | tee $WORK_DIR/build.log`（spec 顶层加 `"min_pt": 18`；新建页每页打印 `placed slide N: body->ph ...`，核对正文进了大占位符），WARN 是提示：最多重建 2 轮
    （溢出→删字/拆页/换版式，不压字号），剩下的写进 uncertainty。保留页不传 `notes`（kit 原样带过原备注）。然后出差异：`python3 $K inspect $WORK_DIR/v1.pptx --full > $WORK_DIR/v1.txt; diff -u $WORK_DIR/v0.txt $WORK_DIR/v1.txt > $WORK_DIR/diff_v0_v1.txt`
    核对 diff：只出现指令要求的改动；出现计划外改动（保留页文字变了、页码以外的变化）就修 spec 重建。改坏了回退 = 用上一版 spec 重建。
 8. **定稿与渲染**（1–2 次）：`cp $WORK_DIR/vN.pptx $OUT_DIR/presentation.pptx`；然后
    `python3 $K render $OUT_DIR/presentation.pptx` → `presentation.pdf`、`preview/slide-*.png`、pdffonts 实测、`render.json`（soffice 两次尝试各限 120 s、换 profile；pdftoppm/pdftocairo 限时；找不到 LibreOffice 也不报错，照实写进 render.json 的 errors）。
-   render 的 status 不是 `rendered` → 不声称有预览，result 的 status 写 partial，原因进 exceptions.run_failures。能看图就打开 2–3 张 PNG 目检。
+   render 的 status 不是 `rendered` → 不声称有预览，result 的 status 写 partial，原因进 exceptions.run_failures。能看图就打开 2–3 张**改过的页**的 PNG 目检（100 dpi）。
+   有初始稿时同一次调用里再渲染改前版本供对照：`python3 $K render $WORK_DIR/v0.pptx && mkdir -p $OUT_DIR/versions && cp $WORK_DIR/v0.pdf $OUT_DIR/versions/v0_before.pdf`（失败不影响交付）。
 9. **记录 + 组装 + 自检**（2–3 次）：`date -u +%FT%TZ > $WORK_DIR/t_end`；plan.md、各版 spec、diff、corrections.md 复制到 `$OUT_DIR/versions/`；写 `content_map.json`、`change_log.md`（`轮次 | 指令 E? | 页 | 改前 | 改后 | 理由 | 回退方式`，建议更正另列一节）、`time_record.json`。
-   把已知事实写进 `$WORK_DIR/facts.json`（只写有的：`content_map`、`compliance_checks`、`exceptions`{material_missing, undecidable, run_failures}、`uncertainty`、`change_log`、`status_reasons`，以及 `versions`、`time_record`、`instructions_done`（E1…逐条：页号 + 证据））。然后 `python3 $SKILL_DIR/scripts/check_result.py --assemble` → 按含义填满 contract 的**每一个**键（任何键名、中文名、嵌套子字段；facts 里同名键原样采用；缺的文件自动跳过，不留骨架字样），再跑
-   `python3 $SKILL_DIR/scripts/check_result.py --template <模板文件> --slides N --paper $WORK_DIR/paper.txt --paper-advisory --min-pt <下限> --source $WORK_DIR/v0.txt --baseline $WORK_DIR/v0.pptx --keep-map <新页:旧页,…>`
-   指令要求核对事实时去掉 --paper-advisory。`--keep-map` 写全部保留页（如 `1:1,2:2,9:8`）：保留页文字变了 → FAIL，结果写进 `$OUT_DIR/version_diff.md`；论文不一致在 advisory 下只报 WARN（就是建议更正清单）。checker 还写 `$OUT_DIR/slide_audit.md`；两个文件都复制到 `versions/`。FAIL 修，最多两轮；修不了的（没有渲染器、材料缺失）就 status=partial 写明原因。build/checker 的 WARN 是提示，不要为清 WARN 反复重建。
+   把已知事实写进 `$WORK_DIR/facts.json`（只写有的：`content_map`、`exceptions`{material_missing, undecidable, run_failures}、`uncertainty`、`change_log`、`status_reasons`，以及 `versions`、`time_record`、
+   `instructions_done`：`{"E1": "slide 3: 8 条压成 4 条（diff_v0_v1.txt）", ...}` 每条指令一句：页号 + 做了什么 + 证据文件；没做的写 "not done: 原因"）。然后 `python3 $SKILL_DIR/scripts/check_result.py --assemble` → 按含义填满 contract 的**每一个**键（任何键名、中文名、嵌套子字段；facts 里同名键原样采用；缺的文件自动跳过，不留骨架字样），再跑
+   `python3 $SKILL_DIR/scripts/check_result.py --template <模板文件> --slides N --paper $WORK_DIR/paper.txt --paper-advisory --min-pt <下限> --source $WORK_DIR/v0.txt --baseline $WORK_DIR/v0.pptx --keep-map <保留页 新:旧,…> --edit-map <改动页 新:旧,…>`
+   checker 最后一步会把自己的判定写回 result.json：compliance 列表里追加 `by: check_result.py` 的行（页数、模板逐字节、保留页、数字回查、图表号、备注、导出、字号、每条指令 E?）和 `checker_record`（命令、FAIL/WARN 原文）；
+   所以它必须**最后**跑（assemble 之后），重跑会替换旧行；不要手改这些行。`version_diff.md` 给出每个改动页的改前/改后行（- / +）和被删页。
+   指令要求核对事实时去掉 --paper-advisory。`--keep-map` 写全部保留页（如 `1:1,2:2,9:8`），`--edit-map` 写改动页对应的原页（如 `3:3,10:8`，照 plan.md；新增页不写）：保留页文字变了 → FAIL，结果写进 `$OUT_DIR/version_diff.md`；论文不一致在 advisory 下只报 WARN（就是建议更正清单）。checker 还写 `$OUT_DIR/slide_audit.md`；两个文件都复制到 `versions/`。FAIL 修，最多两轮；修不了的（没有渲染器、材料缺失）就 status=partial 写明原因。build/checker 的 WARN 是提示，不要为清 WARN 反复重建。
 
 ## 编辑规则（每条针对一种已知失败）
 1. **不整段塞**：论文段落改写成短语；单页 ≤ 5 条要点；build 溢出 WARN 清零。
@@ -65,7 +71,7 @@ description: 学术 PPT 生成与编辑（轻量版）。当任务给出论文/�
 
 ## 交付物（`$OUT_DIR`）
 `presentation.pptx`、`presentation.pdf`、`preview/*.png`、`slide_audit.md`、`corrections.md`、`content_map.json`（主张-来源）、`plan.md`（页级计划 + 秒数）、`change_log.md`、
-`time_record.json`（开始/结束时间、各页秒数与合计）、`versions/`（spec_v*.json、diff_*.txt；pptx 中间版可留在 work）、`result.json`。
+`time_record.json`（开始/结束时间、各页秒数与合计）、`versions/`（spec_v*.json、diff_*.txt、v0_before.pdf；pptx 中间版可留在 work）、`version_diff.md`（逐页改前/改后）、`result.json`。
 
 content_map 每行：`{"slide": 4, "action": "edit|keep|new", "instruction": "E2", "claim": "标题原文", "sources": [{"file": "paper.pdf",
 "locator": "Table 2, p.5", "quote": "..."}], "numbers": [...], "visual": "原生表格 | 原图 Fig. 3 裁剪 | 保留原页图片", "seconds": 60}`。
@@ -76,7 +82,7 @@ content_map 每行：`{"slide": 4, "action": "edit|keep|new", "instruction": "E2
 - `export_artifact` → `{"pdf": "/app/output/presentation.pdf", "png": [...], "pages", "renderer", "fonts": pdffonts 实测, "substitutions", "slide_audit": 路径}`
 - `content_map` → 逐页主张-来源（内联）+ 文件路径；另附 `time_record`、`change_log` 路径
 - `compliance_checks` → 列表：模式正确、页数 = N、每条指令 E? 已执行（逐条）、保留页未被改动（diff 依据）、模板继承（逐字节）、溢出、数字回查、
-  备注、PDF 页数、字体实测；每项 `PASS/FAIL/WARN + 依据`
+  备注、PDF 页数、字体实测；每项 `PASS/FAIL/WARN + 依据`。这些行由 checker 自动写入（见第 9 步），facts 里只需补 checker 测不到的（如"换受众措辞"）。
 - `exceptions` → `{"material_gaps": [...], "undecidable": [...], "run_failures": [...]}`；另写 `uncertainty`、`status_reasons`。
 - **status 只写一个词**：contract 有取值就用它的；否则 complete / partial / failed。complete = 全部指令执行、页数正确、checker PASS、PDF 存在；
   否则 partial（原因写 status_reasons）；没有 pptx 才是 failed。
