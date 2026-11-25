@@ -231,11 +231,12 @@ def paper_check(sl, paper, deck_srcs, fails, warns, preserved=()):
     LBL = r"(Fig(?:ure)?\.?|Table|Tab\.|图|表)\s*(S?\d+)"
     kind = lambda k: "T" if k.lower().startswith(("tab", "表")) else "F"
     caps = {}
-    for line in txt.splitlines():
+    tl = txt.splitlines()
+    for li, line in enumerate(tl):
         for m in re.finditer(r"(?:^|\s{3,})" + LBL + r"\s*[.:|：]", line):  # also right-column captions of 2-column layout text
-            caps.setdefault((kind(m.group(1)), m.group(2)), line[m.start(1):].strip())
+            caps.setdefault((kind(m.group(1)), m.group(2)), (line[m.start(1):].strip() + " " + " ".join(x.strip() for x in tl[li + 1:li + 3])) if m.start(1) < 8 else line[m.start(1):].strip())
     mentioned = {(kind(m.group(1)), m.group(2)) for m in re.finditer(LBL, txt)}
-    words = lambda u: {w.lower() for w in re.findall(r"[A-Za-z]{4,}|[\u4e00-\u9fff]", u)} - {"figure", "table", "with", "from", "that", "this"}
+    words = lambda u: {w.lower()[:6] for w in re.findall(r"[A-Za-z]{4,}|[\u4e00-\u9fff]", u)} - {"figure", "table", "with", "from", "that", "this", "paper", "compar", "result", "overvi", "visual", "numeri"}
     for i, (t, _) in enumerate(sl, 1):
         for line in t.splitlines():
             for m in re.finditer(LBL, line):
@@ -252,8 +253,8 @@ def paper_check(sl, paper, deck_srcs, fails, warns, preserved=()):
                     continue
                 ov = lambda c: len(rest & words(c)) / float(len(rest))
                 best = max(caps, key=lambda k: ov(caps[k]) if k[0] == key[0] else -1)
-                if best != key and ov(caps[best]) >= 0.5 and ov(caps[key]) < 0.25:
-                    bucket.append("slide %d: %r reads like paper %s%s (%r), not %s -> fix the label or the content" % (i, line[:50], "Fig. " if best[0] == "F" else "Table ", best[1], caps[best][:50], m.group(0)))
+                if best != key and len(rest) >= 3 and ov(caps[best]) >= 0.6 and ov(caps[key]) < 0.25:  # word overlap is weak evidence: FAIL only when unambiguous
+                    (bucket if len(rest) >= 4 and ov(caps[best]) >= 0.75 and ov(caps[key]) == 0 else warns).append("slide %d: %r reads like paper %s%s (%r), not %s -> fix the label or the content" % (i, line[:50], "Fig. " if best[0] == "F" else "Table ", best[1], caps[best][:50], m.group(0)))
     if caps:
         print("paper: %d figure/table captions indexed; slide labels checked against them" % len(caps))
 

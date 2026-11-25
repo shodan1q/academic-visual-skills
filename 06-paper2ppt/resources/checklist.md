@@ -13,6 +13,8 @@
 - [ ] 页数符合工作单（"exactly N" = 正好 N 页；checker `--slides N`）
 - [ ] 结果页标题是结论句，不是 "Results"/"实验结果"
 - [ ] 每页正文 ≤ 5 条要点、≤ 2 级；build 无溢出 WARN（或已写明原因）
+- [ ] 标题都在标题占位符内（build 的 placed 行写明了自动适配后的字号；change_log.md 有 "size fit" 记录）
+- [ ] 每组关键结果页带原图或原生表格；图在页上足够大（build 无 "figure is only" WARN）
 - [ ] 每页 `seconds` 写在 spec（→ plan.md），合计 ≈ 规定时长（build 偏差超过 15% 会提示）
 
 ## C. 图表与数字

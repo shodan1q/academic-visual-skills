@@ -47,7 +47,9 @@ python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --templat
    "image": "/app/work/fig2.png", "caption": "原文 Fig. 2：250 °C 稳定性，50 h", "source_note": "Paper Fig. 2, Sec. 3, p.2",
    "notes": "氧空位是作者解释，证据强度中等。"}]}
 ```
-宽图（宽高比 ≥ 1.45）配 body 时 build 打印 `stacked: visual on top (9.0x3.6in), body below`：图满宽在上，要点在下。
+图配 body 时 build 在两种排法里选图更大的一种并打印出来：`stacked: visual on top (9.0x3.6in), body below`（图满宽在上，要点在下，
+4:3 页面上的宽图通常如此）或 `side by side: text 4.5in | visual 7.4in`（左文右图，16:9 页面或接近方形的图通常如此）。
+长标题打印 `title ... 30pt (auto-fit from template 44pt ...)`：字号缩到标题占位符内，同一版式全篇一致，并记入 change_log.md。
 
 ## 3. 示意输出（示例，节选）
 build 打印：

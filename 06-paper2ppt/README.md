@@ -14,7 +14,7 @@
 | 文件 | 作用 |
 |---|---|
 | `SKILL.md` | Agent 执行流程、内容规则、result.json 映射、异常处理 |
-| `scripts/pptx_kit.py` | 纯标准库。`paper` 写 paper.txt（保留版面）和 paper_flow.txt（阅读顺序，双栏不串行）并列出页数、节标题、**全部图表题注+页码**（双栏右栏也能找到）、每页位图数（0 = 矢量图）；`inspect [--full]` 列模板版式/占位符/主题字体颜色/母版字号与已有 deck 每页内容；`build` 在模板上建页：占位符继承、正文进**面积最大**的 body/obj、`source_note` 进来源/注释占位符（没有则页脚上方小字）、图片版式的图注占位符、等比图片、三线表、页脚页码、备注、`keep`/`replace`、溢出与 `min_pt` 字号 WARN、每页打印 `placed` 行；`figcrop` 按题注裁图、自动去白边、图注不进图片（打印题注原文，放到页上做可编辑文字）；宽图/宽表配要点时自动排成上图满宽、下方要点；表格按内容分配列宽并自动选字号（≥ 14）；正文在模板字号放不下时自动降到能放下的最大字号（不低于 `min_pt`）；图在页上太小时 WARN；`build` 另外写出 content_map.json（证据短引在论文文本中的核对结果、每个数字出现的论文页码）、plan.md、change_log.md、合并后的 spec.json；单位指数自动上标（cm-2）、`formulas` 列出的化学式自动下标；两/三行标题在短语边界断行；图下要点字号按剩余空间取；spec 语法错时指出行号；版式名不存在时按页面角色选最接近的版式；`render` 调 LibreOffice（两次尝试、各限 120 s）出 PDF + PNG + pdffonts，并写 `render.json`，找不到渲染器也不报错 |
+| `scripts/pptx_kit.py` | 纯标准库。`paper` 写 paper.txt（保留版面）和 paper_flow.txt（阅读顺序，双栏不串行）并列出页数、节标题、**全部图表题注+页码**（双栏右栏也能找到）、每页位图数（0 = 矢量图）；`inspect [--full]` 列模板版式/占位符/主题字体颜色/母版字号与已有 deck 每页内容；`build` 在模板上建页：占位符继承、正文进**面积最大**的 body/obj、`source_note` 进来源/注释占位符（没有则页脚上方小字）、图片版式的图注占位符、等比图片、三线表、页脚页码、备注、`keep`/`replace`、溢出与 `min_pt` 字号 WARN、每页打印 `placed` 行；`figcrop` 按题注裁图、自动去白边、图注不进图片（打印题注原文，放到页上做可编辑文字）；宽图/宽表配要点时自动排成上图满宽、下方要点；表格按内容分配列宽并自动选字号（≥ 14）；正文在模板字号放不下时自动降到能放下的最大字号（不低于 `min_pt`）；图在页上太小时 WARN；`build` 另外写出 content_map.json（证据短引在论文文本中的核对结果、每个数字出现的论文页码）、plan.md、change_log.md、合并后的 spec.json；单位指数自动上标（cm-2）、`formulas` 列出的化学式自动下标；长标题自动缩到标题占位符内（同一版式全篇同一字号，不低于 24 pt）并在短语边界断行；图 + 要点按"哪种排法图更大"自动选上图下文或左文右图；多面板图连同子图注整体裁出、正文绕排的窄图只裁图所在一侧；字号调整逐条写进 change_log.md；图片文件缺失或 figcrop 失败时不中断；图下要点字号按剩余空间取；spec 语法错时指出行号；版式名不存在时按页面角色选最接近的版式；`render` 调 LibreOffice（两次尝试、各限 120 s）出 PDF + PNG + pdffonts，并写 `render.json`，找不到渲染器也不报错 |
 | `scripts/check_result.py` | 纯标准库。`--init` 写骨架 result.json；查 contract 字段/status/文件、页数、提示文字、备注、PDF 页数、渲染丢字；`--template` 逐字节比对母版版式主题；`--paper` 查只在旧 deck 出现的数字、图号与论文题注内容不符（双栏右栏题注也索引；正文提到但没解析到题注只报 WARN）、只在 [n] 引用旁出现的文献数值未标出处（WARN）（`--preserved` 页只报 WARN）；图片拉伸、`--min-pt` 字号、缺页码、散装文本框、build.log 未处理 WARN；写 `slide_audit.md` 逐页偏差记录；`--assemble` 读 facts.json 与磁盘文件，按含义填满 contract 的每个键（任意键名/中文/嵌套），缺文件跳过；`--baseline v0.pptx --keep-map 新:旧` 比对保留页并写 `version_diff.md`；`--paper-advisory` 把论文不一致降为建议；没有渲染器且 status=partial 时渲染类问题降为 WARN |
 | `resources/checklist.md` | 交付前逐项核对表 |
 | `resources/pptx_xml.md` | 不用 python-pptx 的 zipfile/XML 字符串编辑配方（命名空间安全）、导出与核对命令 |
@@ -48,10 +48,12 @@ python3 /skills/weekly-skill/scripts/check_result.py --paper /app/work/paper.txt
 - 单位上标只认常见单位（cm、m、s、h、g、mol、L、V、K 等）后的 -1…-9 和面积/体积的 2、3；其他上下标要写 `^{}`/`_{}`，`"auto_units": false` 可关闭。
 - 溢出检测是字符宽度估算，加上渲染后文字比对兜底；不能代替人眼看版面。
 - figcrop 依赖题注定位，复杂多栏/跨页图可能裁不准，打印裁剪区文字供核对；失败时改用原生表格或文字并列入 exceptions。
-- 图号与内容的对照靠题注词重叠，中文页面引用英文题注时查不出"Table 1 写成了 Table 2 的内容"，需要人看。
+- 图号与内容的对照靠题注词重叠：只有重叠非常明确才判 FAIL，其余只给 WARN；中文页面引用英文题注时查不出"Table 1 写成了 Table 2 的内容"，需要人看。
+- 标题/正文的自动字号基于字符宽度估算（偏保守），不同字体下可能比必要的略小；`"fit_titles": false` 可关闭标题适配。
 - 只处理 .pptx/.potx；Keynote、Google Slides 需先导出为 pptx。
 - 不改母版/版式/主题；模板本身有问题（缺版式、字体缺失）只报告不修。
 
 ## 维护
-版本 1.4（2026-11）。问题与改进：在提交仓库提 issue。改 `pptx_kit.py` 后用 examples/README.md 的流程回归一次，确保 build 输出
+版本 1.5（2026-11）。1.5 相对 1.4：标题自动适配（此前 44 pt 模板上的英文结论句标题会溢出页顶并压住正文）、图文排法按图面积选择（宽屏模板上图从约 5 in 宽增至约 7 in）、
+figcrop 支持子图注与绕排图、图号对照改为证据不足只提示、缺图/缺 poppler 不再中断。问题与改进：在提交仓库提 issue。改 `pptx_kit.py` 后用 examples/README.md 的流程回归一次，确保 build 输出
 "package integrity OK"、render 产出 PDF/PNG（或照实记录失败）、checker PASS。

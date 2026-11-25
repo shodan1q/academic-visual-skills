@@ -5,6 +5,8 @@ description: 论文转学术 PPT（轻量版）。当任务给出论文/研究�
 
 # 论文转学术 PPT（轻量版）
 
+版本 1.5（2026-11）
+
 ## 路径（环境变量优先）
 案例 `$CASE_JSON`（默认 `/input/case.json`），材料在 `/input` 下（可能有 `material.json`、`artifacts/slide-workorder.json`、
 `target-template.pptx`、`starting-deck.pptx`、论文 PDF）；工作目录 `$WORK_DIR`（`/app/work`）；交付 `$OUT_DIR`（`/app/output`）；
@@ -25,12 +27,15 @@ description: 论文转学术 PPT（轻量版）。当任务给出论文/研究�
    - `paper` 写 `paper_flow.txt`（**阅读顺序**，双栏不串行：读正文、抄短引用它）和 `paper.txt`（保留版面：看表格用它），并打印页数、
      各页起始行号、节标题、**全部 Fig./Table 题注+页码**、每页位图数（raster=0 = 矢量图，用 figcrop 取）。
    - `inspect` 列版式名、占位符、主题字体、母版字号。封面→Title Slide 类；正文/图/表→Title and Content 类；对比→Two Content 类。
+     spec 的 `layout` 写 inspect 列出的**原名**（写了模板里没有的名字时 build 按页面需要自动选版式并打印 note）。
    - PDF 加密：有 qpdf 就 `qpdf --decrypt`；扫描件（paper 报 almost no text layer）：有 tesseract 就 pdftoppm+OCR；都没有 → 写 partial 并说明。
 3. **读论文**（1–3 次）：`sed -n` 分段读 paper_flow.txt：Abstract、Intro 末段（we propose / contributions）、方法要点、每个关键图表所在段、
    Conclusion、Limitations/Discussion。长论文不必整篇贴出，按节标题和行号挑着读；表格数值到 paper.txt 里看。
 4. **取图**（1 次，多张图一条命令连写）：`python3 $K figcrop <论文.pdf> <页> "Figure 2" $WORK_DIR/fig2.png`
-   按题注定位、去白边、**题注不进图片**（打印出题注原文：缩写后写进 spec 的 `caption`）。看它打印的裁剪区文字：应是坐标轴/图例/面板字母；
-   出现整段正文就是裁错了 → 用 `pdfimages -png -f 页 -l 页 <论文.pdf> $WORK_DIR/pimg` 取原始位图。取不到的图进 exceptions，不画替代曲线、不放占位图。
+   按题注定位、去白边、**题注不进图片**（打印出题注原文：缩写后写进 spec 的 `caption`）；多面板图连同 (a)(b) 子图注整体裁出，
+   正文绕排的窄图只裁图所在的一侧。看它打印的尺寸和裁剪区文字：应是坐标轴/图例/面板字母。出现 `WARN crop is tiny` 或整段正文 = 裁错了
+   → 换页码/写法重试一次，或用 `pdfimages -png -f 页 -l 页 <论文.pdf> $WORK_DIR/pimg` 取原始位图。取不到的图进 exceptions，不画替代曲线、不放占位图。
+   **每组关键结果尽量带原图或原表**：方法页用论文的总览/流程图，结果页用数据图或原生表格；全是文字的结果页说服力最弱。
 5. **写 spec.json 并 build**（1–2 次）：格式见下面的例子（`python3 $K` 不带参数打印全部字段）。
    `python3 $K build $WORK_DIR/spec.json 2>&1 | tee $WORK_DIR/build.log`
    页数多时可分两个文件写：`build spec.json slides2.json`（第二个文件的 slides 接在后面）。
@@ -73,8 +78,10 @@ edit / adapt 模式（有 starting-deck 时）：`template` 填要沿用的那�
 - 每页的 `evidence.quote` = 从 paper_flow.txt **照抄**的一小句（≤ 15 个词，含该页的关键数字最好）；build 会在论文里查它并写核对结果。
 - `source_note` 是页面上可见的出处（进模板的来源占位符或页脚上方小字）；`role` 用 title/problem/method/result/conclusion/limits。
 - 单位指数自动上标（写 `mA cm-2`、`h-1` 即可）；化学式列进 `formulas` 自动下标；其他上下标写 `Ce^{3+}`、`T_{50}`。
-- 两行标题自动在短语边界断行；图下要点字号按剩余空间自动取（不低于 `min_pt`）；文字页不写 `font_size`（放不下时自动降，不低于 `min_pt`）。
-- 宽图（宽高比 ≥ 1.45）或 ≥ 4 列的表 + `body`：自动排成上图满宽、下方要点。模板的"图片版式"占位符小，只放接近方形的图。
+- **版面由 build 负责，你只管内容**：标题写完整的结论句即可，放不下模板字号时自动缩到占位符内（同一版式全篇同一字号，不低于 24 pt）并在
+  短语边界断行；图 + 要点自动在"上图下文 / 左文右图"里选图更大的排法；正文、图下要点、表格字号按空间自动取（不低于 `min_pt`）。
+  这些调整逐条写进 change_log.md（"size fit ..."），母版/版式/主题不动。不要写 `font_size`、`image_box` 去手调，除非 build 报 WARN。
+- 一页放一张图或一张表；图旁/图下要点 ≤ 3 条。模板的"图片版式"占位符小，只放接近方形的图。
 
 ## 页面写法（听众打开 PDF 第一眼看到的就是这些）
 - **证据页**（每组关键结果一页）：标题 = 带关键数字的结论句（中文 ≤ 26 字，英文 ≤ 12 词）；一张原图或一张原生表 + 1–3 条要点
@@ -109,7 +116,8 @@ edit / adapt 模式（有 starting-deck 时）：`template` 填要沿用的那�
 | 模板缺某版式/占位符 | 换最接近的版式；仍放不下 → `image_box`/`table_box`（英寸）显式定位，在 `uncertainty` 说明 |
 | 页数超限 | 合并支撑性细节、移到备注；不删主线必需页 |
 | 中文字体缺失 | 不改模板字体；render.json 记录实际替代字体 |
-| figcrop 找不到题注 | 看它打印的块开头，换写法（"Fig. 2"/"图 2"）或换页；仍失败 → 原生表格/文字页 + exception |
+| figcrop 找不到题注 / 没有 poppler | 看它打印的块开头，换写法（"Fig. 2"/"图 2"）或换页；仍失败 → 原生表格/文字页 + exception（不会抛 traceback） |
+| spec 里的图片文件不存在 | build 不中断：该页不带图并打印 WARN，content_map 记"NOT inserted"；补裁图后重建，或写进 exceptions.material_missing |
 | spec.json 语法错 | build 会指出行号；常见是字符串里的引号没转义或多了逗号 |
 | 时间快用完 | 先保证第 5、6 步各跑过一次（pptx + result.json 已在磁盘上），再做改进 |
 
