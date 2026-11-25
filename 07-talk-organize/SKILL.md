@@ -19,9 +19,9 @@ starting-deck 每页都迁过去（`python3 $K inspect starting-deck.pptx --full
 1. **读输入**（2 次）：`cat $CASE_JSON`；`find /input -maxdepth 3 -type f | head -60`；读完 material.json、slide-workorder.json、task.md。
    记下 case_id、`output_contract` 全部字段、模式、**总页数**（exactly N 就正好 N）、**听众**、**时长**、**场合**、语言、模板、问答要求。
 2. **骨架**（第 3 次调用内）：`python3 $SKILL_DIR/scripts/check_result.py --init` → result.json 含 case_id、每个 contract 字段、`status: partial`；之后每步更新。
-3. **读材料**（2 次）：`python3 $K paper paper.pdf $WORK_DIR` → 写 `paper.txt`（`\f` 分页），打印页数、各节标题+页码、**全部 Fig./Table 题注+页码**
-   （双栏右栏的也在）、每页位图数。之后按需 `sed -n` 读 paper.txt 的相关段，不整篇贴进对话。题注里写 "not supplied / Fig. S…" 的图记为材料缺失。
-   加密/扫描件（paper 报 "almost no text layer"）：qpdf / tesseract 可用就处理，否则列 exception。
+3. **读材料**（2 次）：`pdftotext -layout paper.pdf $WORK_DIR/paper.txt`（`\f` 分页）；列题注与页码：
+   `python3 -c "import re,sys;[print(i,l.strip()[:90]) for i,p in enumerate(open(sys.argv[1]).read().split('\f'),1) for l in p.splitlines() if re.match(r'\s*(Fig(ure)?\.?|Table|图|表)\s*S?\d',l)]" $WORK_DIR/paper.txt`
+   加密/扫描件：qpdf / tesseract 可用就处理，否则列 exception。
 4. **汇报目标卡**（写 `$WORK_DIR/talk_plan.md`，这是本题的核心，不要跳过）：
    - **目标**写成可检查的一句话："让<听众>在<N>分钟后认可/理解<X>，依据是<哪几组证据>"。按场合定侧重点：
      组会→方法细节与进度、下一步；开题/中期→问题意义、可行性、风险；答辩→创新点与边界；评审/基金→结论强度、证据、影响；会议 talk→一个核心发现。
@@ -37,36 +37,18 @@ starting-deck 每页都迁过去（`python3 $K inspect starting-deck.pptx --full
 7. **问答准备**（写 `$OUT_DIR/qa_prep.md`）：5–8 个最可能的追问，覆盖 机制、数据（样本量/误差/统计）、对照、局限、可推广性；
    每题给：回答要点（只用材料里的事实）、引用的原文位置、可翻到的页/备用页编号。材料答不了的写"材料未提供，如实说明"。
    备用页（backup）放在正文页之后，计入总页数前先看工作单是否允许；不允许就只写进 qa_prep.md。
-8. **看模板并构建**（3–5 次）：`python3 $K inspect <模板>` 选版式（按下面"页面模式"）；需要的原图 `python3 $K figcrop paper.pdf 页 "Fig. 2" $WORK_DIR/fig2.png`
-   （按题注定位、去白边，**题注不进图片**；打印题注原文、宽高比和裁剪区内文字：应是坐标轴/图例，出现整段正文说明裁错了，改用 `pdfimages`；
-   打印 `WARN no figure pixels` = PDF 里没有这张图 → 不放，记 material_gaps）；表格做成原生 `table`，数值逐格照抄。写 `$WORK_DIR/spec.json`（`"out": "$OUT_DIR/presentation.pptx"`），
+8. **看模板并构建**（3–5 次）：`python3 $K inspect <模板>` 选版式；需要的原图 `python3 $K figcrop paper.pdf 页 "Fig. 2" $WORK_DIR/fig2.png`
+   （打印裁剪区内文字核对）；表格做成原生 `table`，数值逐格照抄。写 `$WORK_DIR/spec.json`（`"out": "$OUT_DIR/presentation.pptx"`），
    `python3 $K build $WORK_DIR/spec.json | tee $WORK_DIR/build.log`。内容/图/表页加 `"source_note": "Paper Table 1, p.3"`（页上可见出处，进模板的来源占位符或页脚上方小字），
    spec 顶层加 `"min_pt": 18`。build 每页打印 `placed slide N: body->ph obj idx1 ...`：核对正文进了版式里**面积最大**的占位符。
-   **字号**：正文**不写 `font_size`**（用模板字号，放不下时 build 自动降到能放下的最大字号，≥ `min_pt`，placed 行标 auto-fit）；表格不写 `table_size`
-   （build 按内容选 ≥ 14 pt 的最大字号并分配列宽）；下标/上标写 `Li_{2}CO_{3}`、`cm^{-1}`（页上是真下标/上标）。**WARN 是提示：最多重建 2 轮**
-   （删字/拆页/换版式），剩下的写进 uncertainty。备注 = 过渡句 + 强调点 + 追问时指向的证据 + 秒数。
-9. **渲染**（1 次）：`python3 $K render $OUT_DIR/presentation.pptx` → `presentation.pdf`、`preview/slide-*.png`、pdffonts 实测、`render.json`（soffice 两次尝试各限 120 s、换 profile；pdftoppm/pdftocairo 限时；找不到 LibreOffice 也不报错，照实写进 render.json 的 errors）。
-   render 的 status 不是 `rendered` → 不声称有预览，result 的 status 写 partial，原因进 exceptions.run_failures。能看图就打开 2–3 张**图/表页**的 PNG（100 dpi）目检：
-   图的坐标轴字能读、表格不挤在页顶、文字不出框。
-10. **记录 + 组装 + 自检**（2–3 次）：写 `content_map.json`、`change_log.md`，`talk_plan.md`/`plan.md` 复制到 `$OUT_DIR`。
-   把已知事实写进 `$WORK_DIR/facts.json`（只写有的：`content_map`、`compliance_checks`、`exceptions`{material_missing, undecidable, run_failures}、`uncertainty`、`change_log`、`status_reasons`，以及本题专有的 `audience_goal`、`selection_log`、`qa_prep`（按 contract 的实际键名写））。然后 `python3 $SKILL_DIR/scripts/check_result.py --assemble` → 按含义填满 contract 的**每一个**键（任何键名、中文名、嵌套子字段；facts 里同名键原样采用；缺的文件自动跳过，不留骨架字样），再跑
-   `python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template <模板> --min-pt <下限> [--slides N] [--source $WORK_DIR/start_text.txt]`
-   有 starting-deck 才加 --source。checker 还查主张标题和页型覆盖（content_map 的 `role` 写 封面/问题/方法/结果/局限/结论），写 `$OUT_DIR/slide_audit.md`，
-   并在**最后**把自己的判定写回 result.json：合规列表里追加 `by: check_result.py` 的行（页数、模板逐字节、数字回查、图表号、备注、导出、字号）和 `checker_record`
-   （命令、FAIL/WARN 原文）——所以它必须在 assemble 之后跑，重跑会替换旧行，不要手改这些行；facts 里只写 checker 测不到的检查（时长合计、证据强度措辞）。FAIL 修，最多两轮；修不了的（没有渲染器、材料缺失）就 status=partial 写明原因。build/checker 的 WARN 是提示，不要为清 WARN 反复重建。
-
-## 页面模式（听众和读者打开 PDF 第一眼看到的就是这些）
-- **证据页**（每组关键证据一页）：标题 = 带关键数字的结论句（中文 ≤ 26 字，最多 2 行）；用正文版式（如 Title and Content）放 `image` 或 `table` +
-  `body` 1–3 条要点（关键数字加粗 `**88.8%**`，写条件：圈数/倍率/温度/样本数）。宽图（宽高比 ≥ 1.45）或 ≥ 4 列的表，build 自动排成**上图满宽、下方要点**。
-  模板的"图片版式"（图片占位符小、标题在下）只放接近方形的图；build 报 `figure is only ...` 就换正文版式。`caption` 写"原文 Fig. 2a–b：<题注要点+条件>"。
-- **出处行带证据强度**：每个内容页 `source_note` = "Paper Fig. 2, Sec. 3.1, p.3 · 证据：强（3 个电池中位数）"；中/弱写明原因（"中：单次 ex-situ 表征"、
-  "弱：作者推断，无原位证据"）。听众在页上就看得到结论有多硬，和标题措辞一致。
-- **表格页**：只留支撑主张的列和行（≤ 5 列、≤ 7 行，其余进备注/qa_prep），主张所在的行或数加粗（单元格写 `**99.62**`）。
-- **文字页**（动机/方法/局限）：3–5 条，每条带具体对象、条件或数字；"已有方案 vs 本文"用两栏（`body`/`body2`），两栏第一行写加粗小标题（`**已有方案（文献值）**`）。
-  少于 3 条就并页或配原文的图/表，不留半页空白。
-- **按场合排序**：评审/基金 → 第 2 页"结论先行"（3–4 个关键数 + 尚未验证什么），最后一页落到"决策点/下一步"（明确哪句是论文结论、哪句是我们的建议）；
-  组会 → 方法细节与进度、结果后加"下一步/风险"页；答辩 → 创新点页 + 边界页；会议 talk → 一个核心发现贯穿。
-- **备用页**（工作单允许且计入页数时）：放在正文后，标题"备用：Q3 <问题>"，内容是回答该追问的原文图/表；qa_prep 里对应题指向它。
+   **字号阶梯**：标题 = 母版标题；正文 ≥ 工作单下限（没给就 18 pt）；表格 ≥ 14；图注 14；出处 11–12。**每条 WARN 都处理**（溢出→删字/拆页/换版式，
+   `font_size` 不低于阶梯）。备注 = 过渡句 + 强调点 + 追问时指向的证据 + 秒数。
+9. **导出**（2 次）：`cd $OUT_DIR && timeout 120 soffice --headless -env:UserInstallation=file:///tmp/lo_profile --convert-to pdf presentation.pptx`；
+   `mkdir -p preview && timeout 60 pdftoppm -png -r 50 presentation.pdf preview/slide`；`pdffonts presentation.pdf`。失败就照实记录。
+10. **映射、记录与自检**（3 次）：写 `content_map.json`、`talk_plan.md`/`plan.md` 复制到 `$OUT_DIR`、`change_log.md`，填 result.json；
+    `python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template <模板> --min-pt <下限> [--slides N] [--source $WORK_DIR/start_text.txt]`
+    （有 starting-deck 才加 --source：抓"只在旧 deck 里出现的数字"和"图号与题注内容不符"）。checker 同时写 `$OUT_DIR/slide_audit.md`
+    （逐页版式、占位符、散装框、图片比例误差、最小字号、备注、PDF 丢字）。FAIL 必须修，最多两轮。
 
 ## 内容规则
 1. 不是压缩论文：页面只放服务目标的内容；被砍掉的内容在取舍表里有去向和理由。
@@ -85,7 +67,6 @@ content_map 每行：`{"slide": 4, "role": "结果", "claim": "...", "evidence_s
 "locator": "Table 1, p.3", "quote": "..."}], "numbers": [...], "seconds": 60, "transition": "...", "qa_refs": ["Q2"]}`。
 
 ## result.json 映射（任何键名风格按含义对应；嵌套按子字段填）
-实际写入用 `check_result.py --assemble`（它按含义映射任意键名）；下面是各键应含的内容，写进 facts.json 的同名键会原样采用。
 - 演示文件 / editable_source → `{"pptx", "spec", "rebuild", "slides", "layouts_used"}`；导出 / export_artifact → `{"pdf", "png", "pages", "renderer", "fonts", "substitutions", "slide_audit"}`
 - 页级证据映射 / content_map → content_map 内联列表 + 文件路径；合规检查 / compliance_checks → 页数、时长合计、模板继承、备注、溢出、数字回查、
   预览页数、字体，每项 `PASS/FAIL/WARN + 依据`；另加 `audience_goal`（目标句+听众画像）、`selection_log`（取舍表）、`qa_prep`（问题列表+文件路径）。
@@ -100,5 +81,5 @@ content_map 每行：`{"slide": 4, "role": "结果", "claim": "...", "evidence_s
 | 页数上限装不下全部证据 | 按目标保留主线证据，其余进备注/备用页/qa_prep，取舍表写理由 |
 | 证据撑不起要求的结论强度 | 降低措辞强度，在 exceptions 写明"材料仅支持到 X" |
 | 模板缺版式 | 换最接近版式；`image_box`/`table_box` 显式定位并记录 |
-| soffice 缺失/超时/崩溃 | render 已自动换 profile 重试；仍失败 → status=partial，render.json 的 errors 进 exceptions.run_failures，不声称有预览 |
+| soffice 失败 | 换 profile 目录重试一次；仍失败记录原因，status=partial |
 | 没有 python-pptx | 正常，pptx_kit.py 纯标准库 |

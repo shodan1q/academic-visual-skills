@@ -2,8 +2,6 @@
 """check_result.py - validate result.json + the delivered deck (stdlib only, Python 3.8+).
 
 Usage: python3 check_result.py --init                       # skeleton result.json (every contract field, status partial)
-       python3 check_result.py --assemble [facts.json]       # result.json with EVERY contract key filled by meaning from facts + files
-       ... [--baseline v0.pptx --keep-map 1:1,2:2 --edit-map 3:3] [--paper-advisory]   # preserved-slide check + per-slide before/after version_diff.md
        python3 check_result.py [--case X] [--out OUT_DIR/result.json] [--deck D.pptx] [--source start_text.txt ...]
                               [--paper paper.txt] [--preserved 2,5] [--slides N | --max-slides N] [--template target-template.pptx] [--min-pt 18]
 Defaults: $CASE_JSON|/input/case.json, $OUT_DIR|/app/output, deck = newest *.pptx in OUT_DIR, source = $WORK_DIR/*.txt.
@@ -77,8 +75,7 @@ def slides_of(deck):
     with zipfile.ZipFile(deck) as zf:
         rd = lambda n: zf.read(n).decode("utf-8") if n in zf.namelist() else ""
         rel = lambda part: {i: os.path.normpath(os.path.join(os.path.dirname(part), t)) for i, t in re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', rd(os.path.dirname(part) + "/_rels/" + os.path.basename(part) + ".rels"))}
-        row = lambda m: "<a:p><a:t>%s</a:t></a:p>" % " | ".join("".join(re.findall(r"<a:t>([^<]*)</a:t>", c)) for c in re.findall(r"<a:tc\b.*?</a:tc>", m.group(0), re.S))
-        txt = lambda x: "\n".join("".join(unescape(t) for t in re.findall(r"<a:t>([^<]*)</a:t>", p)) for p in re.findall(r"<a:p(?=[ >]).*?</a:p>", re.sub(r"<a:tr\b.*?</a:tr>", row, x, flags=re.S), re.S))  # table row = one line
+        txt = lambda x: "\n".join("".join(unescape(t) for t in re.findall(r"<a:t>([^<]*)</a:t>", p)) for p in re.findall(r"<a:p(?=[ >]).*?</a:p>", x, re.S))
         pr, out = rel("ppt/presentation.xml"), []
         for rid in re.findall(r'<p:sldId [^>]*r:id="([^"]+)"', rd("ppt/presentation.xml")):
             part = pr[rid]
@@ -145,11 +142,11 @@ def check_deck(deck, res, sources, max_slides, fails, warns, exact=None):
     pdfs = [p for p in glob.glob(os.path.join(os.path.dirname(deck), "*.pdf"))]
     pdf = stem + ".pdf" if os.path.exists(stem + ".pdf") else (pdfs[0] if pdfs else None)
     if not pdf:
-        fails.append("[render] no PDF preview next to the deck (run pptx_kit.py render; if no renderer exists set status partial and record it)")
+        fails.append("no PDF preview next to the deck (render with soffice, or state the failure in result.json)")
     else:
         pg = pdf_pages(pdf)
         if pg is not None and pg != n:
-            fails.append("[render] PDF %s has %s pages but deck has %d slides (stale or wrong preview? re-run pptx_kit.py render)" % (os.path.basename(pdf), pg, n))
+            fails.append("PDF %s has %s pages but deck has %d slides (stale or wrong preview?)" % (os.path.basename(pdf), pg, n))
         for i, (t, _) in enumerate(sl[:pg or 0], 1):  # text clipped or dropped in the render shows up as tokens missing from the PDF page
             try:
                 pt = re.sub(r"\s+", "", subprocess.run(["pdftotext", "-f", str(i), "-l", str(i), pdf, "-"], capture_output=True, text=True, timeout=30).stdout)
@@ -213,28 +210,13 @@ def paper_check(sl, paper, deck_srcs, fails, warns, preserved=()):
         fails.append("numbers on slides that come from the old deck but NOT from the paper (deck error carried over? check and correct to the paper, log it): %s" % ", ".join(only_deck[:15]))
     if unknown:
         warns.append("numbers on slides found in neither paper nor deck (computed? label 'calculated from ...' or remove): %s" % ", ".join(unknown[:15]))
-    # literature values: decimals that the paper only states next to a citation [n] must carry an attribution on the slide
-    CIT = re.compile(r"\[\d+(?:[,\u2013-]\s*\d+)*\]")
-    occ = {}
-    for line in txt.splitlines():
-        for m in NUM.finditer(line):  # cited = a [n] follows within 40 characters (same sentence or same table row)
-            if "." in m.group(0):
-                occ.setdefault(norm(m.group(0)), []).append(bool(CIT.search(line[m.end():m.end() + 40])))
-    lit = []
-    for i, (t, _) in enumerate(sl, 1):
-        for line in t.splitlines():
-            if CIT.search(line) or re.search(r"\bref|文献|报道|reported|et al", line, re.I):
-                continue
-            lit += ["s%d:%s" % (i, x) for x in NUM.findall(line) if "." in x and occ.get(norm(x)) and all(occ[norm(x)])]
-    if lit:
-        warns.append("numbers the paper only gives with a citation [n] (other groups' results?) appear on slides without attribution - add '[n] 报道' or move off this-work pages: %s" % ", ".join(lit[:10]))
     LBL = r"(Fig(?:ure)?\.?|Table|Tab\.|图|表)\s*(S?\d+)"
     kind = lambda k: "T" if k.lower().startswith(("tab", "表")) else "F"
     caps = {}
     for line in txt.splitlines():
-        for m in re.finditer(r"(?:^|\s{3,})" + LBL + r"\s*[.:|：]", line):  # also right-column captions of 2-column layout text
-            caps.setdefault((kind(m.group(1)), m.group(2)), line[m.start(1):].strip())
-    mentioned = {(kind(m.group(1)), m.group(2)) for m in re.finditer(LBL, txt)}
+        m = re.match(r"\s*" + LBL + r"\s*[.:|：]", line)
+        if m:
+            caps.setdefault((kind(m.group(1)), m.group(2)), line.strip())
     words = lambda u: {w.lower() for w in re.findall(r"[A-Za-z]{4,}|[\u4e00-\u9fff]", u)} - {"figure", "table", "with", "from", "that", "this"}
     for i, (t, _) in enumerate(sl, 1):
         for line in t.splitlines():
@@ -242,10 +224,7 @@ def paper_check(sl, paper, deck_srcs, fails, warns, preserved=()):
                 key = (kind(m.group(1)), m.group(2))
                 bucket = warns if i in preserved else fails
                 if caps and key not in caps:
-                    if key in mentioned:  # cited in the paper text but caption not parsed (layout) -> advisory only
-                        warns.append("slide %d cites %s: referenced in the paper text but no caption found in paper.txt (supplementary not supplied, or caption not parsed) - confirm by eye and say 'not supplied' where true" % (i, m.group(0)))
-                    else:
-                        bucket.append("slide %d cites %s but the paper never mentions that number (no caption, no in-text reference)" % (i, m.group(0)))
+                    bucket.append("slide %d cites %s but the paper has no caption with that number" % (i, m.group(0)))
                     continue
                 rest = words(line[m.end():])
                 if len(rest) < 2 or key not in caps:
@@ -322,215 +301,6 @@ def evidence_rows(res, n, warns):
         warns.append("evidence map has no row for slides %s" % sorted(set(range(1, n + 1)) - pages)[:20])
 
 
-ROLES = [("status", r"^status$|状态"), ("case_id", r"case_?id|caseid|用例|案例编号"),
-         ("evidence", r"evidence|content_?map|source_?map|sources|mapping|provenance|citation|证据|映射|来源|出处"),
-         ("change_log", r"change|history|diff|revision|修改|变更|版本差异"),
-         ("render", r"render|export|preview|pdf|png|version|record|导出|渲染|版本|预览|记录"),
-         ("editable", r"editable|pptx|presentation|deck|slides?|source|artifact|可编辑|演示|文稿|源文件|幻灯片"),
-         ("compliance", r"compliance|check|verif|validation|合规|检查|核对|校验"),
-         ("exceptions", r"exception|gap|missing|failure|error|异常|缺失|失败"),
-         ("uncertainty", r"uncertain|limit|risk|caveat|issue|不确定|局限|限制|风险|问题"),
-         ("plan", r"plan|outline|structure|storyline|order|大纲|结构|主线|页序"),
-         ("notes", r"note|script|speaker|讲稿|备注|讲解")]
-
-
-def assemble(case, out_path, facts_path):
-    """Write result.json from the agent's facts + the files on disk, filling EVERY contract key by meaning (any key name/style)."""
-    od, fx = os.path.dirname(out_path), {}
-    if facts_path and os.path.exists(facts_path):
-        try:
-            fx = json.loads(Path(facts_path).read_text(encoding="utf-8"))
-        except Exception as e:
-            print("WARN: facts file unreadable (%s); assembling from files only" % e)
-    nk = lambda k: re.sub(r"[\W_]+", "", str(k)).lower()
-    fxn = {nk(k): v for k, v in fx.items()}
-    rdj = lambda p: (lambda t: json.loads(t))(Path(p).read_text(encoding="utf-8")) if p and os.path.exists(p) else None
-    def safe(fn, d=None):
-        try:
-            return fn()
-        except Exception:
-            return d
-    deck = fx.get("pptx") or (sorted(glob.glob(os.path.join(od, "*.pptx")), key=os.path.getmtime) or [None])[-1]
-    rj = safe(lambda: rdj(os.path.join(od, "render.json"))) or {}
-    pdf = rj.get("pdf") or next(iter(glob.glob(os.path.join(od, "*.pdf"))), None)
-    png = rj.get("png") or sorted(glob.glob(os.path.join(od, "preview", "*.png")))
-    sl = safe(lambda: slides_of(deck), []) if deck else []
-    files = {k: os.path.join(od, f) for k, f in (("content_map", "content_map.json"), ("change_log", "change_log.md"), ("slide_audit", "slide_audit.md"),
-             ("plan", "plan.md"), ("spec", "spec.json"), ("corrections", "corrections.md"), ("version_diff", "version_diff.md"), ("render_record", "render.json"))
-             if os.path.exists(os.path.join(od, f))}
-    files.update({k: v for k, v in (fx.get("files") or {}).items() if isinstance(v, str) and os.path.exists(v)})
-    vers = sorted(glob.glob(os.path.join(od, "versions", "*")))
-    specs = [v for v in vers if re.search(r"spec[^/]*\.json$", v)] or sorted(glob.glob(os.path.join(os.environ.get("WORK_DIR", "/app/work"), "spec*.json")), key=os.path.getmtime)
-    if specs and "spec" not in files:
-        files["spec"] = specs[-1]
-    cm = fx.get("content_map") or safe(lambda: rdj(files.get("content_map"))) or [{"slide": i, "title": t.split("\n")[0][:90]} for i, (t, _) in enumerate(sl, 1)]
-    lines = lambda k: [l.strip("-* ").strip() for l in safe(lambda: Path(files[k]).read_text(encoding="utf-8").splitlines(), []) if l.strip("-*# ").strip()]
-    errs = list(rj.get("errors") or [])
-    exc = fx.get("exceptions") or {"material_missing": fx.get("material_gaps") or [], "undecidable": [], "run_failures": errs}
-    if isinstance(exc, dict) and errs and not exc.get("run_failures"):
-        exc["run_failures"] = errs
-    st = fx.get("status") or ("failed" if not deck else "complete" if pdf and png else "partial")
-    val = {"case_id": (case.get("case_id") or case.get("caseId") or case.get("id")) if isinstance(case, dict) else None,
-           "editable": {"pptx": deck, "slides": len(sl), "spec": files.get("spec") or fx.get("spec"), "rebuild": fx.get("rebuild") or "python3 pptx_kit.py build %s" % (files.get("spec") or "spec.json"),
-                        "template": fx.get("template"), "versions": fx.get("versions") or vers, "slide_titles": [t.split("\n")[0][:90] for t, _ in sl]},
-           "render": {"pptx": deck, "pdf": pdf, "png": png, "pages": rj.get("pages"), "renderer": rj.get("renderer") or "none (see run_failures)",
-                      "fonts": rj.get("fonts"), "substitutions": rj.get("substitutions"), "render_record": files.get("render_record"), "slide_audit": files.get("slide_audit"),
-                      "change_log": fx.get("change_log") or lines("change_log") or ["single build, no revisions"]},
-           "evidence": {"rows": cm, "file": files.get("content_map")}, "compliance": fx.get("compliance_checks") or fx.get("compliance") or
-           [{"check": "deck opens and has %d slides" % len(sl), "result": "PASS" if sl else "FAIL", "basis": "zip/XML read"},
-            {"check": "PDF + PNG previews", "result": "PASS" if pdf and png else "FAIL", "basis": rj.get("status") or "files on disk"}],
-           "exceptions": exc, "uncertainty": fx.get("uncertainty") or ["no open issues recorded beyond exceptions"],
-           "change_log": fx.get("change_log") or lines("change_log") or ["single build, no revisions"],
-           "plan": fx.get("plan") or lines("plan") or [t.split("\n")[0][:90] for t, _ in sl], "notes": [{"slide": i, "notes": n[:200]} for i, (_, n) in enumerate(sl, 1)]}
-    val["summary"] = {"files": dict(files, pptx=deck, pdf=pdf), "slides": len(sl), "status": st}
-    clean = lambda v: {k: x for k, x in v.items() if not empty(x)} if isinstance(v, dict) else v
-    def pick(key, desc=""):
-        if nk(key) in fxn:
-            return fxn[nk(key)]
-        for text in (str(key), str(desc)):
-            for role, rx in ROLES:
-                if re.search(rx, text, re.I):
-                    return (val[role] if role == "exceptions" else clean(val[role])) if role in val else st
-        return clean(val["summary"])
-    contract = find_contract(case)
-    res = {}
-    for f, sub in fields(contract).items():
-        desc = json.dumps((contract.get("properties") or contract).get(f, "") if isinstance(contract, dict) else "", ensure_ascii=False)
-        if sub:
-            par = pick(f, desc)
-            def leaf(k, v):
-                if isinstance(par, dict):
-                    hit = [x for kk, x in par.items() if nk(kk) and (nk(kk) in nk(k) or nk(k) in nk(kk) or nk(kk).rstrip("s") in nk(k)) and not empty(x)]
-                    if hit:
-                        return hit[0]
-                return pick(k, json.dumps(v, ensure_ascii=False))
-            res[f] = {k: leaf(k, v) for k, v in sub.items()}
-            res[f] = {k: (v if not empty(v) else par) for k, v in res[f].items()}
-        else:
-            res[f] = pick(f, desc)
-    sd = ((contract.get("properties") or {}).get("status") if isinstance(contract.get("properties"), dict) else contract.get("status")) if isinstance(contract, dict) else None
-    words = [w for w in re.findall(r"[A-Za-z_]{4,}", json.dumps(sd) if sd else "") if w.lower() not in ("type", "string", "description", "enum", "status")]
-    if words:
-        st = next((w for w in words if w.lower().startswith(st[:4].lower())), words[0] if st == "complete" else words[-1])
-    for k in ("source_map", "change_log", "uncertainty", "material_gaps", "exceptions"):
-        res.setdefault(k, fx.get(k) or {"source_map": files.get("content_map") or val["evidence"], "change_log": val["change_log"], "uncertainty": val["uncertainty"],
-                                       "material_gaps": (exc.get("material_missing") if isinstance(exc, dict) else None) or ["none recorded"], "exceptions": exc}[k])
-    for k, v in fx.items():
-        res.setdefault(k, v)
-    res["case_id"], res["status"] = val["case_id"], st
-    res["status_reasons"] = fx.get("status_reasons") or (errs or ["deliverables present; see compliance checks"])
-    Path(out_path).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
-    print("assembled %s: %d contract fields, status=%s; run the checker next" % (out_path, len(fields(contract)), st))
-
-
-def baseline_check(deck, base, kmap, out_md, fails, warns, emap=None):
-    """Preserved slides must be text-identical to the baseline deck; every other slide gets a before/after line diff
-    against its baseline slide: --edit-map new:old if given, else the most similar unused baseline slide (word overlap +
-    position, one-to-one) or "new". Writes a per-slide version diff (version_diff.md)."""
-    a, b = slides_of(deck), slides_of(base)
-    rows, detail, emap = [], [], dict(emap or {})
-    ln = lambda t: [x.strip() for x in t.split("\n") if x.strip()]
-    wd = lambda t: set(re.findall(r"\w[\w.%/+-]*", t.lower()))
-    free_new = [i for i in range(1, len(a) + 1) if i not in kmap and i not in emap]
-    free_old = [j for j in range(1, len(b) + 1) if j not in set(kmap.values()) | set(emap.values())]
-    pairs = sorted(((len(wd(a[i - 1][0]) & wd(b[j - 1][0])) / float(len(wd(a[i - 1][0]) | wd(b[j - 1][0])) or 1) + 0.1 / (1 + abs(i - j)), i, j)
-                    for i in free_new for j in free_old), reverse=True)
-    for r, i, j in pairs:
-        if r >= 0.3 and i not in emap and j not in emap.values():
-            emap[i] = j
-    for i, (t, n) in enumerate(a, 1):
-        o = kmap.get(i)
-        if o is None:  # edited (diff against its baseline slide) or new
-            j = emap.get(i) if emap.get(i, 0) <= len(b) else None
-            ttl = (ln(t) or [""])[0][:60]
-            if j is None:
-                rows.append("| %d | - | new slide | %s |" % (i, ttl))
-                detail.append("### slide %d (new)\n" % i + "\n".join("+ " + x[:110] for x in ln(t)[:12]) + "\n")
-                continue
-            bt, bn = b[j - 1]
-            minus, plus = [x for x in ln(bt) if x not in ln(t)], [x for x in ln(t) if x not in ln(bt)]
-            rows.append("| %d | %d | edited (%d lines out, %d in%s) | %s |" % (i, j, len(minus), len(plus), ", notes changed" if bn != n else "", ttl))
-            detail.append("### slide %d (from baseline slide %d)\n" % (i, j) + "\n".join(["- " + x[:110] for x in minus[:10]] + ["+ " + x[:110] for x in plus[:10]]) + "\n")
-            continue
-        if o > len(b):
-            fails.append("keep-map: baseline has no slide %d" % o)
-            continue
-        bt, bn = b[o - 1]
-        if bt != t:
-            dl = [x for x in t.split("\n") if x not in bt.split("\n")][:2]
-            fails.append("preserved slide %d (baseline %d) text changed: %s" % (i, o, dl))
-            rows.append("| %d | %d | TEXT CHANGED | %s |" % (i, o, "; ".join(dl)[:80]))
-        else:
-            rows.append("| %d | %d | kept, identical text%s | |" % (i, o, "" if bn == n else ", notes changed"))
-            if bn != n:
-                warns.append("preserved slide %d: speaker notes differ from baseline slide %d (allowed only if the instruction asks)" % (i, o))
-    mapped = set(kmap.values()) | {int(m) for m in re.findall(r"\| \d+ \| (\d+) \| edited", "\n".join(rows))}
-    gone = sorted(set(range(1, len(b) + 1)) - mapped)
-    Path(out_md).write_text("# Version diff vs %s (written by check_result.py)\n\n%d -> %d slides. Kept unchanged: %s. Baseline slides deleted: %s.\n\n"
-                            "| new slide | baseline slide | status | title / first changed line |\n|---|---|---|---|\n%s\n\n## Line diff per edited/new slide (- before, + after)\n\n%s"
-                            % (os.path.basename(base), len(b), len(a), sorted(kmap) or "none", ["%d: %s" % (g, (ln(b[g - 1][0]) or [""])[0][:40]) for g in gone] or "none",
-                               "\n".join(rows), "\n".join(detail) or "(none)\n"), encoding="utf-8")
-    print("baseline: %d preserved slides compared, %d edited/new slides diffed; written to %s" % (len(kmap), len(a) - len(kmap), out_md))
-
-
-GENERIC = re.compile(r"^\s*(results?|methods?|methodology|introduction|background|conclusions?|discussion|summary|outline|experiments?|结果|方法|背景|引言|结论|讨论|总结|实验)\s*$", re.I)
-
-
-def storyline_check(sl, res, warns):
-    """Claim titles and page-type coverage (cover, motivation, method, result, conclusion)."""
-    for i, (t, _) in enumerate(sl, 1):
-        ttl = t.split("\n")[0]
-        if i > 1 and GENERIC.match(ttl):
-            warns.append("slide %d title %r is a topic, not a claim -> write the finding as the title" % (i, ttl))
-    blob = (json.dumps(res, ensure_ascii=False) + " ".join(t for t, _ in sl)).lower()
-    need = {"motivation/problem": r"motivat|problem|background|gap|question|动机|问题|背景", "method": r"method|approach|design|方法|做法|实验设计",
-            "result/evidence": r"result|evidence|finding|结果|证据|发现", "conclusion/limitations": r"conclu|limit|take-home|summary|结论|局限|总结"}
-    miss = [k for k, rx in need.items() if not re.search(rx, blob)]
-    if miss and len(sl) >= 5:
-        warns.append("page types not found in the deck/content map: %s (cover -> problem -> method -> results -> conclusion/limitations)" % miss)
-
-
-CHECKS = [  # (check name, regex over FAIL/WARN messages, applies-if, basis when nothing matched)
-    ("slide count", r"slides, work order requires|slides, limit is", lambda a: a.slides or a.max_slides, "deck slide count = required"),
-    ("template inheritance (masters/layouts/theme byte-identical)", r"template parts|layouts that are not in the template|free text boxes", lambda a: a.template, "parts compared with the template file"),
-    ("preserved slides unchanged", r"preserved slide \d|keep-map", lambda a: a.baseline and a.keep_map, "version_diff.md"),
-    ("per-slide before/after record vs starting deck", r"keep-map|baseline has no", lambda a: a.baseline and not a.keep_map and a.edit_map, "version_diff.md lists every slide's removed/added lines"),
-    ("numbers traced to source text", r"numbers on slides|decimal numbers|integers on slides|neither paper nor deck|carry numbers", lambda a: True, "every number on the slides found in the source/paper text"),
-    ("figure/table labels match paper captions", r"caption|label", lambda a: a.paper, "slide Fig./Table labels compared with the paper caption index"),
-    ("speaker notes", r"speaker notes|notes mostly repeat", lambda a: True, "every slide has notes"),
-    ("PDF/PNG export matches deck", r"\[render\]|PDF|PNG|rendered PDF", lambda a: True, "PDF page count = slide count; PNG previews present"),
-    ("font size floor", r"pt is below|below --min-pt|table text|explicit", lambda a: a.min_pt, "no explicit body size below the floor"),
-    ("contract fields and status", r"contract field|sub-field|placeholder text|^status|case_id is|listed file", lambda a: True, "all contract fields filled, one-word status")]
-
-
-def record_checks(out, res, a, fails, warns):
-    """Write the checker's own verdicts into result.json: compliance rows (by=check_result.py, replaced on every run) + checker_record."""
-    import datetime
-    rows = []
-    for name, rx, applies, basis in CHECKS:
-        if not applies(a):
-            continue
-        f = [m for m in fails if re.search(rx, m, re.I)]
-        w = [m for m in warns if re.search(rx, m, re.I)]
-        rows.append({"check": name, "result": "FAIL" if f else "WARN" if w else "PASS", "basis": ("; ".join((f + w)[:2])[:300] if f or w else basis), "by": "check_result.py"})
-    done = res.get("instructions_done")
-    if isinstance(done, dict):
-        rows += [{"check": "instruction %s executed" % k, "result": "PASS" if v and not re.search(r"not done|未执行|skipped|FAIL", json.dumps(v, ensure_ascii=False), re.I) else "WARN",
-                  "basis": (v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))[:200], "by": "check_result.py"} for k, v in done.items()]
-    key = next((k for k in res if re.search(r"compliance|check|verif|validation|合规|检查|核对|校验", k, re.I) and k != "checker_record"), "compliance_checks")
-    cur = res.get(key)
-    if isinstance(cur, list):
-        res[key] = [r for r in cur if not (isinstance(r, dict) and r.get("by") == "check_result.py")] + rows
-    elif isinstance(cur, dict):
-        cur["automated_checks"] = rows
-    else:
-        res[key] = ([{"check": "agent note", "result": "INFO", "basis": str(cur)}] if cur and not empty(cur) else []) + rows
-    res["checker_record"] = {"command": "python3 check_result.py " + " ".join(sys.argv[1:]), "verdict": "FAIL" if fails else "PASS",
-                             "fails": fails, "warns": warns, "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    Path(out).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
-    print("result.json: %d check rows written to '%s' + checker_record" % (len(rows), key))
-
-
 def main():
     ap = argparse.ArgumentParser()
     out_dir = os.environ.get("OUT_DIR", "/app/output")
@@ -545,15 +315,8 @@ def main():
     ap.add_argument("--preserved", help="comma list of slides that must stay unchanged (paper mismatches there become WARN)")
     ap.add_argument("--min-pt", type=float, help="smallest allowed explicit body font size")
     ap.add_argument("--init", action="store_true", help="write a skeleton result.json (status partial) and exit")
-    ap.add_argument("--assemble", nargs="?", const="", help="FACTS.json: write result.json filling every contract key by meaning, then exit")
-    ap.add_argument("--paper-advisory", action="store_true", help="paper mismatches are proposals (WARN), e.g. deck-edit tasks that did not ask for fact-checking")
-    ap.add_argument("--baseline", help="baseline deck (v0 / starting deck) for preserved-slide checks and the per-slide before/after diff")
-    ap.add_argument("--keep-map", help="new:old pairs of preserved slides, e.g. 1:1,2:2,9:8")
-    ap.add_argument("--edit-map", help="new:old pairs of edited slides for the before/after diff, e.g. 3:3,6:6,10:8 (unlisted: matched by similarity); 'auto' = all by similarity")
     a = ap.parse_args()
     case = load(a.case)
-    if a.assemble is not None:
-        return assemble(case, a.out, a.assemble or os.path.join(os.environ.get("WORK_DIR", "/app/work"), "facts.json")) or 0
     if a.init:
         cid = (case.get("case_id") or case.get("caseId") or case.get("id")) if isinstance(case, dict) else None
         sk = {"case_id": cid}
@@ -604,14 +367,7 @@ def main():
             continue
         sl, lost_by = r
         evidence_rows(res, len(sl), warns)
-        kmap = {int(x): int(y) for x, y in re.findall(r"(\d+)\s*:\s*(\d+)", a.keep_map or "")}
-        pres = {int(v) for v in re.findall(r"\d+", a.preserved or "")} | set(kmap)
-        if a.baseline and (kmap or a.edit_map):  # --edit-map alone (adapt: every slide migrated) -> diff only, nothing preserved
-            baseline_check(d, a.baseline, kmap, os.path.join(os.path.dirname(a.out), "version_diff.md"), fails, warns,
-                           {int(x): int(y) for x, y in re.findall(r"(\d+)\s*:\s*(\d+)", a.edit_map or "")})
-        storyline_check(sl, res, warns)
-        if a.paper_advisory:
-            pres |= set(range(1, len(sl) + 1))
+        pres = {int(v) for v in re.findall(r"\d+", a.preserved or "")}
         if a.paper:
             paper_check(sl, a.paper, [s for s in srcs if os.path.abspath(s) != os.path.abspath(a.paper)], fails, warns, pres)
         if a.template:
@@ -625,16 +381,9 @@ def main():
         bw = [l.strip() for l in open(blog, encoding="utf-8", errors="ignore") if l.startswith("WARN")]
         if bw:
             warns.append("build.log still has %d WARN lines (fix, or list each in exceptions): %s" % (len(bw), bw[0][:90]))
-    if st != "complete":
-        warns += [f + " [allowed: status is %s; keep it in exceptions.run_failures]" % raw for f in fails if f.startswith("[render]")]
-        fails = [f for f in fails if not f.startswith("[render]")]
     if st == "complete" and fails:
         fails.append("status 'complete' while the problems above remain -> fix them or use 'partial'")
     print("\n".join(["WARN: " + w for w in warns] + ["FAIL: " + f for f in fails]))
-    try:
-        record_checks(a.out, res, a, fails, warns)
-    except Exception as e:  # recording must never break the check itself
-        print("WARN: could not write check rows into result.json: %s" % e)
     if fails:
         return 1
     print("PASS: case_id ok, %d contract fields filled, status=%s" % (len(spec), raw))

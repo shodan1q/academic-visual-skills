@@ -42,24 +42,3 @@
 - 新增逐页审计表 `slide_audit.md`、骨架 `--init`、图片拉伸检查、标题溢出估算按 LibreOffice 渲染校准（两行标题不再误报）；修正 `placeholders` 键被当成占位文字的误报。
 
 复测（2026-11-20，本机 LibreOffice 26.2，只按本包 SKILL.md 操作）：rt07：同一论文与模板，6 分钟 6 页、跨领域基金评审听众；checker `--paper` 把我在结论页随手写的 "1000 h"（论文没有）报成 WARN，改为不带数字后通过。结果：result.json 字段齐全，PDF/PNG 页数与幻灯片数一致，checker PASS（剩余 WARN：封面标题按模板 44 pt 折成 3 行，已写进 uncertainty）。
-
-## 版本 1.2：运行稳健性（内部记录，未做基础 Agent 对照）
-针对四类会让运行时 Agent 交出残缺结果的情况：
-- result.json 按固定键名组装，而 contract 用了别的键名 → 骨架文字残留、checker FAIL。现在 `check_result.py --assemble` 按键名与描述的含义映射（中英文、嵌套子字段、JSON schema / 列表 / 字典三种 contract 写法都在合成用例上试过）。
-- 可选文件缺失导致组装脚本崩溃 → assemble 对每个文件做存在判断，缺了就跳过。
-- 为清掉无法满足的 WARN 反复重建 → SKILL 规定 WARN 只是提示，最多重建 2 轮，剩下的写进 uncertainty。
-- 没有渲染器 → `pptx_kit.py render` 自动探测、两次尝试、限时，失败写 render.json；status=partial 时 checker 把渲染类问题降为 WARN。
-- 复测 rt07 时强制 `SOFFICE=none`（模拟没有渲染器）：render 写出 render.json（status failed + 原因），assemble 给出 status=partial 与 run_failures，checker 把渲染类问题降为 WARN 并 PASS，没有陷入重试循环。
-
-## 版本 1.3：读者看到的页面（内部记录，合成案例，未做基础 Agent 对照）
-脚本换成与 06/09 共用的合并版（06 的论文地图/去题注裁图/宽图满宽/表格自适应/正文保留模板字号，09 的判定行写回 result.json/逐页改前改后/上下标），SKILL 增加"页面模式"。
-同一合成案例 S07（双栏 3 页论文，矢量图；跨学科中期评审，8 分钟正好 8 页；Fig. S4/S5、Table S1 未提供），维护者先按 1.2 的 SKILL.md、再按 1.3 的 SKILL.md 各做一遍：
-| 看点 | 1.2 | 1.3 |
-|---|---|---|
-| 图页 | 用模板"图片版式"：图约 4.5 in 宽、白边 + 原题注被裁进图里，坐标轴字读不清，页上题注重复 | 正文版式上图满宽 9.0 x 3.6 in、题注不在图里，下方 2 条要点，坐标轴可读 |
-| 表格页 | 14 pt 小表挤在页顶，下半页空白 | 22 pt、列宽按内容，主张行加粗，下方 1 条结论 |
-| 证据强度 | 只在 talk_plan/content_map | 每个内容页的出处行写"证据：强/中/弱 + 原因" |
-| 题注索引 | 一行命令漏掉右栏的 Table 1 → checker 误报 FAIL（"论文没有 Table 1"） | `paper` 列出 5 个题注；checker PASS |
-| 合规记录 | 由 Agent 手写 | checker 写入 8 行 `by: check_result.py` + 命令与 WARN 原文 |
-| 调用次数 | 约 12（停在 FAIL） | 约 14（1 次因出处行过长重建） |
-已知局限：本机 LibreOffice 用替代中文字体渲染，中文粗体不显示（XML 中有 b="1"）；正式环境字体以 render.json 的 pdffonts 记录为准。

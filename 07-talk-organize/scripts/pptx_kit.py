@@ -4,17 +4,14 @@
   python3 pptx_kit.py inspect FILE.pptx [--full]  # theme fonts/colours, layouts+placeholders (inches), every slide's
                                                   # shapes by role (ph:title/ph:obj/text), table rows, pictures, notes
   python3 pptx_kit.py build SPEC.json     # write the deck, print per-slide summary + overflow/placeholder/integrity warnings
-  python3 pptx_kit.py paper paper.pdf /app/work     # paper.txt + pages/sections/every Fig./Table caption with page (2-column safe)
-  python3 pptx_kit.py figcrop paper.pdf PAGE "Fig. 2" /app/work/fig2.png [DPI] [--keep-caption]   # crop by caption, trim margins,
-                                                  # figure caption left OUT of the image (printed: put it on the slide)
-  python3 pptx_kit.py render /app/output/presentation.pptx   # soffice (2 tries, 120 s each) -> PDF, 100 dpi PNGs, pdffonts, render.json
+  python3 pptx_kit.py figcrop paper.pdf PAGE "Fig. 2" /app/work/fig2.png [DPI]   # crop a figure/table by its caption (poppler)
 
 SPEC = {"template": "template.pptx|.potx|starting_deck.pptx", "out": "/app/output/deck.pptx",
         "footer": "optional footer text", "date": "optional", "slide_numbers": true,
         "slides": [
           {"keep": 3, "replace": {"old text": "new text"}, "notes": "..."},     # reuse slide 3 of the input file
           {"layout": "Title and Content" or 2, "title": "claim sentence", "subtitle": "...",
-           "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words", "Al_{2}O_{3}, cm^{-1}"], "body2": ["right column"],
+           "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words"], "body2": ["right column"],
            "font_size": 20, "image": "/app/work/fig2.png", "image_box": [x, y, w, h], "caption": "Fig. 2 ...",
            "table": [["head", "head"], ["1.0", "2.0"]], "table_box": [x, y, w, h], "table_size": 14,
            "source_note": "Paper Sec. 3, Table 1, p.2",   # -> layout placeholder named Source/Note/Ref, else small textbox above footer
@@ -127,17 +124,9 @@ def inspect(path, full=False):
         print("   [notes] " + ((n if full else n[:160]).replace("\n", " / ") if n else "(none)"))
 
 def runs(text, sz=None):
-    """**bold**, H_{2}O subscript, cm^{-1} / Ce^{3+} superscript (the markup never reaches the slide text)."""
-    out, bold = [], False
-    for g in re.split(r"(\*\*|_\{[^{}]*\}|\^\{[^{}]*\})", str(text)):
-        if g == "**":
-            bold = not bold
-            continue
-        base = ' baseline="-25000"' if g.startswith("_{") else ' baseline="30000"' if g.startswith("^{") else ""
-        g = g[2:-1] if base else g
-        if g:
-            out.append('<a:r><a:rPr lang="zh-CN" altLang="en-US"%s%s%s dirty="0"/><a:t>%s</a:t></a:r>' % (' sz="%d"' % (sz * 100) if sz else "", ' b="1"' if bold else "", base, escape(g)))
-    return "".join(out) or '<a:endParaRPr lang="zh-CN"/>'
+    segs = re.split(r"\*\*", str(text))
+    return "".join('<a:r><a:rPr lang="zh-CN" altLang="en-US"%s%s dirty="0"/><a:t>%s</a:t></a:r>' % (' sz="%d"' % (sz * 100) if sz else "", ' b="1"' if i % 2 else "", escape(g))
+                   for i, g in enumerate(segs) if g) or '<a:endParaRPr lang="zh-CN"/>'
 
 def items_of(items):
     items = items.split("\n") if isinstance(items, str) else items
@@ -149,21 +138,13 @@ def paras(items, sz=None):
 def xfrm(b):
     return '<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>' % tuple(int(v) for v in b)
 
-def plain(t):
-    """Visible characters of a markup string: **bold** markers and _{..}/^{..} wrappers removed (for width estimates)."""
-    return re.sub(r"[_^]\{([^{}]*)\}", r"\1", str(t)).replace("**", "")
-
-def fit_need(what, items, box, sz):
-    """Rough, deliberately conservative estimate: CJK 1.05 em, latin 0.62 em, titles x0.9 (calibrated on LibreOffice renders), line 1.2 em, 0.25 in indent per level."""
-    wpt, hpt = box[2] / 12700.0 - 14, box[3] / 12700.0 - 7
-    lines = sum(max(1, -(-sum(1.05 if ord(c) > 0x2e80 else 0.62 for c in plain(t)) * sz * (0.9 if what == "title" else 1) // max(wpt - 18 * l, 40))) for l, t in items_of(items))
-    return lines, lines * sz * 1.2, hpt
-
 def fit_warn(n, what, items, box, sz):
+    """Rough, deliberately conservative overflow estimate: CJK 1.05 em, latin 0.62 em, titles x0.9 (calibrated on LibreOffice renders), line 1.2 em, 0.25 in indent per level."""
     if box and items:
-        lines, need, hpt = fit_need(what, items, box, sz)
-        if need > hpt * (1.35 if what == "title" else 1) or (what == "title" and lines > 2):  # renderers let 2-line titles spill into the margin
-            print("WARN slide %d %s: ~%d lines at %dpt need %.0fpt but box is %.0fpt high -> shorten, split slide or pick a bigger layout" % (n, what, lines, sz, need, hpt))
+        wpt, hpt = box[2] / 12700.0 - 14, box[3] / 12700.0 - 7
+        lines = sum(max(1, -(-sum(1.05 if ord(c) > 0x2e80 else 0.62 for c in t.replace("**", "")) * sz * (0.9 if what == "title" else 1) // max(wpt - 18 * l, 40))) for l, t in items_of(items))
+        if lines * sz * 1.2 > hpt * (1.35 if what == "title" else 1) or (what == "title" and lines > 2):  # renderers let 2-line titles spill into the margin
+            print("WARN slide %d %s: ~%d lines at %dpt need %.0fpt but box is %.0fpt high -> shorten, split slide or pick a bigger layout" % (n, what, lines, sz, lines * sz * 1.2, hpt))
 
 def imgsize(data):
     if data[:8] == b"\x89PNG\r\n\x1a\n":
@@ -237,16 +218,10 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
     def sp(p, what, body, box=None, sz=None):
         if p is None:
             return print("WARN slide %d: layout %r has no free placeholder for %s -> pick another layout" % (n, lay["name"], what))
-        g, eff = box or geom(z, lay, p), sz or p["sz"] or mpt(p["type"] in ("title", "ctrTitle"))
-        if not sz and what in ("body", "body2") and g and body and (lambda f: f[1] > f[2])(fit_need(what, body, g, eff)):
-            lo_pt = int(S.get("min_pt") or 18)  # inherited size would overflow: largest even size that fits, never below min_pt
-            sz = eff = next((v for v in range(eff - eff % 2 - 2, lo_pt - 1, -2) if (lambda f: f[1] <= f[2])(fit_need(what, body, g, v))), lo_pt)
-            what_note = " (auto-fit from template size)"
-        else:
-            what_note = ""
         add('<p:sp><p:nvSpPr><p:cNvPr id="@ID@" name="%s"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph %s/></p:nvPr></p:nvSpPr><p:spPr>%s</p:spPr>'
             '<p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>' % (q(p["name"]), p["attrs"], xfrm(box) if box else "", paras(body, sz)))
-        used.append("%s->ph %s idx%s %r %s %dpt%s" % (what, p["type"], p["idx"], p["name"], "%.1fx%.1fin" % (g[2] / EMU, g[3] / EMU) if g else "", eff, what_note))
+        g, eff = box or geom(z, lay, p), sz or p["sz"] or mpt(p["type"] in ("title", "ctrTitle"))
+        used.append("%s->ph %s idx%s %r %s %dpt" % (what, p["type"], p["idx"], p["name"], "%.1fx%.1fin" % (g[2] / EMU, g[3] / EMU) if g else "", eff))
         fit_warn(n, what, body, g, eff)
         if S.get("min_pt") and what in ("body", "body2") and eff < S["min_pt"]:
             print("WARN slide %d %s: %dpt is below min_pt %s -> shorten/split instead of shrinking" % (n, what, eff, S["min_pt"]))
@@ -274,25 +249,10 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
     if vis and not vbox and not s.get("body") and not b1:
         b1 = big(0.15)
     g1, tbox = b1 and geom(z, lay, b1) or [0.5 * EMU, 1.5 * EMU, cx - EMU, cy - 2.3 * EMU], None
-    bsz = s.get("font_size")
-    if vis and not vbox and s.get("body"):
-        iw0, ih0 = imgsize(open(s["image"], "rb").read()) if s.get("image") else (len(s["table"][0]) * 2, 2)
-        if iw0 / float(ih0) >= 1.45 or (s.get("table") and not s.get("image") and len(s["table"][0]) >= 4):
-            # wide figure / wide table: full-width visual on top, short takeaway bullets underneath (readable sizes)
-            bsz = bsz or max(int(S.get("min_pt") or 18), 20)
-            bh = min(max(len(items_of(s["body"])) * bsz * 1.45 * 12700 + 0.25 * EMU, g1[3] * 0.2), g1[3] * 0.42)
-            vbox, tbox = [g1[0], g1[1], g1[2], g1[3] - bh - 0.08 * EMU], [g1[0], g1[1] + g1[3] - bh, g1[2], bh]
-            if s.get("image") and not s.get("table"):  # very wide figure leaves a gap: move the takeaways up under figure + caption
-                shown = min(vbox[2] / iw0, (vbox[3] - (0.4 * EMU if s.get("caption") else 0)) / ih0) * ih0 + (0.4 * EMU if s.get("caption") else 0)
-                if vbox[3] - shown > 0.3 * EMU:
-                    tbox = [g1[0], g1[1] + shown + 0.12 * EMU, g1[2], g1[1] + g1[3] - (g1[1] + shown + 0.12 * EMU)]
-            used.append("stacked: visual on top (%.1fx%.1fin), body below" % (g1[2] / EMU, (g1[3] - bh) / EMU))
-        else:
-            vbox, tbox = [g1[0] + g1[2] * 0.53, g1[1], g1[2] * 0.47, g1[3]], [g1[0], g1[1], g1[2] * 0.5, g1[3]]
-    elif vis and not vbox:
-        vbox, tbox = g1, None
+    if vis and not vbox:
+        vbox, tbox = ([g1[0] + g1[2] * 0.53, g1[1], g1[2] * 0.47, g1[3]], [g1[0], g1[1], g1[2] * 0.5, g1[3]]) if s.get("body") else (g1, None)
     if s.get("body"):
-        sp(b1, "body", s["body"], tbox, bsz)
+        sp(b1, "body", s["body"], tbox, s.get("font_size"))
     if s.get("body2"):
         sp(b2, "body2", s["body2"], None, s.get("font_size"))
     if vis:
@@ -312,11 +272,6 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
                 '<a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
                 % (q(os.path.basename(s["image"])), rid, xfrm([x + (w - iw * k) / 2, y, iw * k, ih * k])))
             h = ih * k
-            st = any(u.startswith("stacked") for u in used)  # already full-width on top: only a much smaller figure is worth a rebuild
-            if iw * k < (0.5 if st else 0.55) * cx and ih * k < 0.6 * cy:
-                print("WARN slide %d: figure is only %.1fx%.1fin on a %.1fin-wide slide (axis labels unreadable?) -> %s" % (n, iw * k / EMU, ih * k / EMU, cx / EMU,
-                      "keep 1 short body line (rest into notes) or drop the body" if st else
-                      "use a Title+Content layout (wide figure + short body stacks automatically), drop the body, or give image_box"))
         capsp = lambda yy: add('<p:sp><p:nvSpPr><p:cNvPr id="@ID@" name="Caption"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>'
             '<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:pPr algn="ctr"/>%s</a:p></p:txBody></p:sp>' % (xfrm([x, yy, w, cap]), runs(s["caption"], s.get("caption_size", 14))))
         cph = pic and s.get("caption") and s.get("image") and big(0.0)
@@ -325,31 +280,20 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
         elif s.get("caption") and s.get("image"):
             capsp(y + h)  # figure caption below the figure
         if s.get("table"):
-            rows = s["table"]
+            rows, tsz = s["table"], s.get("table_size", 14)
             if s.get("image"):
                 y, h = y + h + cap + 0.1 * EMU, vbox[1] + vbox[3] - (y + h + cap + 0.1 * EMU)
             if s.get("caption") and not s.get("image"):
                 capsp(y)  # table caption above the table
                 y += cap
-            nc = max(len(r) for r in rows)
-            cw = lambda c, z: sum(1.05 if ord(ch) > 0x2e80 else 0.58 for ch in plain(c)) * z + 16  # pt incl. cell margins
-            need = lambda z: [max([cw(r[j], z) for r in rows if j < len(r)] + [36]) for j in range(nc)]
-            fits = lambda z: sum(need(z)) <= w / 12700.0 and len(rows) * z * 1.9 <= h / 12700.0
-            tsz = s.get("table_size") or next((z for z in (24, 22, 20, 18, 16, 14) if fits(z)), 14)
-            if not fits(tsz):
-                print("WARN slide %d: table needs ~%.0fpt wide x %.0fpt high at %dpt but box is %.0fx%.0fpt -> drop columns/rows (move to notes) or split" % (
-                    n, sum(need(tsz)), len(rows) * tsz * 1.9, tsz, w / 12700.0, h / 12700.0))
-            nd = need(tsz)
-            colw = [int(w * v / sum(nd)) for v in nd]
-            rh = min(h / len(rows), tsz * 2.4 * 12700)
-            used.append("table %dx%d at %dpt" % (len(rows), nc, tsz))
+            rh, nc = min(h / len(rows), 0.45 * EMU), max(len(r) for r in rows)
             ln = lambda e, wd: '<a:%s w="%d">%s</a:%s>' % (e, wd, '<a:solidFill><a:schemeClr val="tx1"/></a:solidFill>' if wd else "<a:noFill/>", e)
             trs = "".join('<a:tr h="%d">%s</a:tr>' % (rh, "".join('<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>%s</a:p></a:txBody><a:tcPr>%s</a:tcPr></a:tc>' % (
                 runs("**%s**" % c if i == 0 and str(c) else c, tsz), ln("lnL", 0) + ln("lnR", 0) + ln("lnT", 19050 if i == 0 else 0) + ln("lnB", 12700 if i == 0 else 19050 if i == len(rows) - 1 else 0))
                 for c in list(r) + [""] * (nc - len(r)))) for i, r in enumerate(rows))
             add('<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="@ID@" name="Table @ID@"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>'
                 '<p:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1"/>'
-                '<a:tblGrid>%s</a:tblGrid>%s</a:tbl></a:graphicData></a:graphic></p:graphicFrame>' % (x, y, sum(colw), rh * len(rows), "".join('<a:gridCol w="%d"/>' % c for c in colw), trs))
+                '<a:tblGrid>%s</a:tblGrid>%s</a:tbl></a:graphicData></a:graphic></p:graphicFrame>' % (x, y, w, rh * len(rows), '<a:gridCol w="%d"/>' % (w / nc) * nc, trs))
     print("   placed slide %d [%s]: %s" % (n, lay["name"], "; ".join(used) or "-"))
     for p in L:
         val = {"ftr": S.get("footer"), "dt": S.get("date"), "sldNum": str(n) if S.get("slide_numbers", True) else None}[p["type"]] if p["type"] in FOOT else None
@@ -416,17 +360,12 @@ def build(spec_path):
             zf.writestr(name, z[name])
     print("wrote %s (%d slides)" % (S["out"], len(S["slides"])))
 
-def figcrop(pdf, page, label, out, dpi=200, keep_caption=False):
-    """Crop a figure/table from a PDF page via pdftotext -bbox-layout + pdftoppm (poppler). Figures: the caption is left OUT of
-    the picture (put "Paper Fig. N ..." on the slide as editable text; --keep-caption keeps it), white margins are trimmed, a
-    caption that sits ABOVE its figure is handled, and a caption with no figure pixels next to it is reported."""
-    import subprocess, tempfile
+def figcrop(pdf, page, label, out, dpi=200):
+    """Crop a figure/table from a PDF page via pdftotext -bbox-layout + pdftoppm (poppler). Prints words inside the crop."""
+    import subprocess
     x = subprocess.run(["pdftotext", "-bbox-layout", "-f", str(page), "-l", str(page), pdf, "-"], capture_output=True, text=True, timeout=60).stdout
-    pg = re.search(r'<page width="([\d.]+)" height="([\d.]+)"', x)
-    if not pg:
-        sys.exit("pdftotext -bbox-layout gave no page %s (page out of range, encrypted or scanned PDF?)" % page)
-    pw, ph = [float(v) for v in pg.groups()]
-    blocks = [([float(v) for v in m.group(1, 2, 3, 4)], unescape(" ".join(re.findall(r">([^<]+)</word>", m.group(5)))), m.group(5).count("<line"))
+    pw, ph = [float(v) for v in re.search(r'<page width="([\d.]+)" height="([\d.]+)"', x).groups()]
+    blocks = [([float(v) for v in m.group(1, 2, 3, 4)], " ".join(re.findall(r">([^<]+)</word>", m.group(5))), m.group(5).count("<line"))
               for m in re.finditer(r'<block xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</block>', x, re.S)]
     key = re.sub(r"\s+", "", label).lower()
     cap = min([b for b in blocks if re.sub(r"\s+", "", b[1]).lower().startswith(key)], key=lambda b: b[2], default=None)  # caption = shortest match
@@ -436,170 +375,23 @@ def figcrop(pdf, page, label, out, dpi=200, keep_caption=False):
     widths = sorted(b[0][2] - b[0][0] for b in blocks if b[2] >= 2) or [pw]
     twocol = widths[len(widths) // 2] < pw * 0.5  # median paragraph width -> two-column page
     lo, hi = (0, pw / 2) if twocol and x1 < pw * 0.55 else (pw / 2, pw) if twocol and x0 > pw * 0.45 else (0, pw)
-    prose = lambda b: len(b[1].split()) >= 6 and b[1].rstrip().endswith((".", "。", ":", ";")) or b[0][2] - b[0][0] > (hi - lo) * 0.6
-    para = [b for b in blocks if b is not cap and b[0][2] > lo and b[0][0] < hi and prose(b)]  # body text bounds the crop
-    lo, hi, k = max(lo, 18), min(hi, pw - 18), dpi / 72.0
-    def ink(l, t, r, bt):  # bounding box (pt) of non-white pixels in a region, from a 50 dpi greyscale render; None if blank
-        if bt - t < 6 or r - l < 6:
-            return None
-        try:
-            tmp, g = tempfile.mkdtemp(prefix="figcrop_"), 50 / 72.0
-            subprocess.run(["pdftoppm", "-gray", "-r", "50", "-f", str(page), "-l", str(page), "-x", str(int(l * g)), "-y", str(int(t * g)), "-W", str(max(1, int((r - l) * g))),
-                            "-H", str(max(1, int((bt - t) * g))), "-singlefile", pdf, os.path.join(tmp, "p")], check=True, timeout=60, capture_output=True)
-            d = open(os.path.join(tmp, "p.pgm"), "rb").read()
-            hd = re.match(rb"P5\s+(\d+)\s+(\d+)\s+(\d+)\s", d)
-            w, h, px = int(hd.group(1)), int(hd.group(2)), d[hd.end():]
-            rows = [i for i in range(h) if min(px[i * w:(i + 1) * w] or b"\xff") < 235]
-            cols = [j for j in range(w) if min(px[j::w][:h] or b"\xff") < 235]
-            return (l + cols[0] / g - 3, t + rows[0] / g - 3, l + (cols[-1] + 1) / g + 3, t + (rows[-1] + 1) / g + 3) if rows and cols else None
-        except Exception as e:
-            print("(margin trim skipped: %s)" % e)
-            return (l, t, r, bt)
-    other = [b for b in blocks if b is not cap and lo - 5 <= b[0][0] < hi and len(b[1].split()) <= 30 and (re.match(r"\d{1,2}(\.\d{1,2})*\.?\s+[A-Z\u4e00-\u9fff][a-z\u4e00-\u9fff]", b[1])
-             or re.match(r"(Fig(ure)?\.?|Table|Tab\.|Scheme|图|表)\s*S?\d+[a-z]?\s*[.:|：]", b[1]))]  # section headings + other captions bound a figure
-    if table:  # tables: caption above + rows below, kept together; stops at body text or the next section heading
-        head = [b for b in blocks if re.match(r"(\d{1,2}(\.\d{1,2})*\.?$|\d{1,2}(\.\d{1,2})*\.?\s+[A-Z\u4e00-\u9fff]|[IVX]+\.)", b[1]) and lo - 5 <= b[0][0] < hi]
-        bot = min([b[0][1] for b in para + head if b[0][1] > y1 + 5] or [ph - 36]) - 2
-        top, bot = y0 - 2, min(bot, max([b[0][3] for b in blocks if y1 <= b[0][1] < bot] or [bot]) + 12)  # room for the bottom rule; ink() trims
-        box, where = ink(lo, top, hi, bot) or (lo, top, hi, bot), "table incl. its caption"
-    else:  # figure above its caption; if that region is blank, the caption sits above the figure
-        txt = [b for b in blocks if b is not cap and b[0][2] > lo and b[0][0] < hi and (prose(b) or b[0][2] - b[0][0] > (hi - lo) * 0.4 and len(b[1].split()) >= 6)]
-        above = (lo, max([b[0][3] for b in txt + other if b[0][3] <= y0 + 1] or [30]) + 2, hi, y0 - 1)
-        below = (lo, y1 + 1, hi, min([b[0][1] for b in para + other if b[0][1] > y1 + 1] or [ph - 36]) - 2)
-        box, where = ink(*above), "figure above caption (caption NOT in the image)"
-        if box and keep_caption:
-            box, where = (box[0], box[1], box[2], y1 + 2), "figure above caption (caption kept)"
-        if not box:
-            box, where = ink(*below), "figure below caption (caption NOT in the image)"
-            if box and keep_caption:
-                box, where = (box[0], y0 - 2, box[2], box[3]), "figure below caption (caption kept)"
-        if not box:
-            box, where = (lo, above[1], hi, y1 + 2), "WARN no figure pixels next to the caption: the PDF may not contain this figure -> do not insert it, record a material gap"
-    l, t, r, bt = max(box[0], 0), max(box[1], 0), min(box[2], pw), min(box[3], ph)
-    subprocess.run(["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page), "-x", str(int(l * k)), "-y", str(int(t * k)), "-W", str(int((r - l) * k)),
-                    "-H", str(int((bt - t) * k)), "-png", "-singlefile", pdf, out[:-4] if out.endswith(".png") else out], check=True, timeout=120)
-    within = [b for b in blocks if b[0][1] >= t - 1 and b[0][3] <= bt + 1 and b[0][0] >= l - 1 and b[0][2] <= r + 1]
-    print("cropped page %s [%.0f,%.0f,%.0f,%.0f]pt (%.1f x %.1f in, aspect %.2f; %s) -> %s" % (page, l, t, r, bt, (r - l) / 72, (bt - t) / 72, (r - l) / max(bt - t, 1), where, out))
-    print("caption (put the label + a short version on the slide as editable text):\n  %s" % cap[1][:300])
-    print("text inside crop (should be axis labels/legend/panel letters, not body paragraphs): %s" % [b[1][:40] for b in within][:12])
-    if any(b[2] >= 3 and len(b[1].split()) >= 5 * b[2] and b is not cap for b in within):
-        print("WARN crop contains a multi-line text block - may be a body paragraph; check the PNG or use pdfimages")
-
-def paper(pdf, outdir):
-    """paper.pdf -> OUTDIR/paper.txt (pdftotext -layout, form feed = page break) + a map: pages, text per page (scan check),
-    section headings, every Figure/Table caption with page (column-aware, from bbox blocks) and raster-image count per page."""
-    import subprocess
-    os.makedirs(outdir, exist_ok=True)
-    txt = os.path.join(outdir, "paper.txt")
-    try:
-        r = subprocess.run(["pdftotext", "-layout", pdf, txt], capture_output=True, text=True, timeout=120)
-    except Exception as e:
-        sys.exit("pdftotext unavailable (%s): extract text another way (python zlib on the PDF streams) and record it in exceptions" % e)
-    if r.returncode:
-        sys.exit("pdftotext failed (%s) - encrypted? try qpdf --decrypt; scanned? pdftoppm + tesseract" % r.stderr.strip()[-200:])
-    pages = open(txt, encoding="utf-8", errors="ignore").read().split("\f")
-    pages = pages[:-1] if pages and not pages[-1].strip() else pages
-    print("paper.txt: %s (%d pages, %d chars)" % (txt, len(pages), sum(len(p) for p in pages)))
-    thin = [i for i, p in enumerate(pages, 1) if len(p.strip()) < 200]
-    if thin:
-        print("WARN pages with almost no text layer (scanned/figure-only?): %s" % thin[:20])
-    try:
-        il = subprocess.run(["pdfimages", "-list", pdf], capture_output=True, text=True, timeout=60).stdout.splitlines()[2:]
-    except Exception:
-        il = []
-    imgs = {}
-    for ln in il:
-        f = ln.split()
-        if len(f) > 4 and f[0].isdigit() and f[2] == "image" and int(f[3]) * int(f[4]) > 40000:
-            imgs[int(f[0])] = imgs.get(int(f[0]), 0) + 1
-    print("sections (page | heading):")
-    num = lambda t: re.match(r"(?:[1-9]|1[0-5])(?:\.\d{1,2})*\.?$", t)
-    for i, p in enumerate(pages, 1):
-        for ln in p.splitlines():
-            seg = [g for g in re.split(r"\s{3,}", ln.strip()) if g]
-            for a, g in enumerate(seg):
-                m = re.match(r"((?:[1-9]|1[0-5])(?:\.\d{1,2})*\.?)\s{1,2}([A-Z\u4e00-\u9fff][a-z\u4e00-\u9fff][^.]{0,50})$", g)
-                if m or (num(g) and a + 1 < len(seg) and re.match(r"[A-Z][a-z]", seg[a + 1])):
-                    print("  p.%d | %s" % (i, (m.group(1) + " " + m.group(2)) if m else g + " " + seg[a + 1][:50]))
-                elif not (a and num(seg[a - 1])) and re.match(r"(Abstract|Introduction|Methods?|Results?|Discussion|Conclusions?|References|Limitations|Acknowledg\w+|摘要|引言|方法|结果|讨论|结论|参考文献)$", g):
-                    print("  p.%d | %s" % (i, g))
-    print("captions (page | label | start) - cite exactly these numbers; raster = big bitmap images on that page (0 -> vector figure: use figcrop):")
-    LBL = re.compile(r"^(Fig(?:ure)?\.?|Table|Tab\.|Scheme|图|表)\s*(S?\d+[a-z]?)\s*[.:|：]")
-    for i in range(1, len(pages) + 1):
-        try:
-            x = subprocess.run(["pdftotext", "-bbox-layout", "-f", str(i), "-l", str(i), pdf, "-"], capture_output=True, text=True, timeout=60).stdout
-        except Exception as e:
-            print("  p.%d caption scan skipped: %s" % (i, e))
-            continue
-        for m in re.finditer(r"<block [^>]*>(.*?)</block>", x, re.S):
-            t = unescape(" ".join(re.findall(r">([^<]+)</word>", m.group(1))))
-            c = LBL.match(t)
-            if c:
-                print("  p.%d | %s %s | %s | raster=%d" % (i, c.group(1), c.group(2), t[:110], imgs.get(i, 0)))
-
-def render(deck, dpi=100):
-    """deck.pptx -> deck.pdf + preview/slide-N.png + render.json. Never raises: every failure is recorded honestly."""
-    import glob, shutil, subprocess, tempfile
-    out, stem = os.path.dirname(os.path.abspath(deck)), os.path.splitext(os.path.abspath(deck))[0]
-    rec = {"pptx": os.path.abspath(deck), "pdf": None, "png": [], "pages": None, "renderer": None, "fonts": [], "substitutions": [], "errors": [], "commands": []}
-    def run(cmd, t):
-        rec["commands"].append(" ".join(cmd))
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=t)
-            return r.returncode, (r.stdout or "") + (r.stderr or "")
-        except Exception as e:  # missing binary, timeout
-            return -1, "%s: %s" % (type(e).__name__, e)
-    for old in glob.glob(os.path.join(out, "preview", "slide*.png")) + glob.glob(stem + ".pdf"):
-        os.remove(old)  # stale previews from an earlier build must not pass as this build's render
-    env = os.environ.get("SOFFICE", "")
-    cands = ([env] if env and env != "none" and os.path.exists(env) else []) + [shutil.which(c) for c in ("soffice", "libreoffice")] + glob.glob("/usr/lib/libreoffice/program/soffice") + glob.glob("/opt/libreoffice*/program/soffice") + \
-        glob.glob("/Applications/LibreOffice.app/Contents/MacOS/soffice")
-    so = None if env == "none" else next((c for c in cands if c), None)
-    if not so:
-        rec["errors"].append("no LibreOffice (soffice/libreoffice) found: PDF/PNG previews could not be produced")
-    for k in range(2 if so else 0):
-        prof = tempfile.mkdtemp(prefix="lo_kit%d_" % k)
-        rc, msg = run([so, "--headless", "-env:UserInstallation=file://" + prof, "--convert-to", "pdf", "--outdir", out, deck], 120)
-        if os.path.exists(stem + ".pdf") and os.path.getmtime(stem + ".pdf") >= os.path.getmtime(deck) - 1:
-            rec["pdf"], rec["renderer"] = stem + ".pdf", (run([so, "--version"], 30)[1].strip().splitlines() or ["LibreOffice"])[0][:80]
-            break
-        rec["errors"].append("soffice attempt %d failed (rc %s): %s" % (k + 1, rc, msg.strip()[-200:]))
-    if rec["pdf"]:
-        rc, info = run(["pdfinfo", rec["pdf"]], 30)
-        m = re.search(r"Pages:\s+(\d+)", info)
-        rec["pages"] = int(m.group(1)) if m else len(re.findall(rb"/Type\s*/Page(?!s)", open(rec["pdf"], "rb").read()))
-        os.makedirs(os.path.join(out, "preview"), exist_ok=True)
-        for tool in (["pdftoppm", "-png", "-r", str(dpi)], ["pdftocairo", "-png", "-r", str(dpi)]):
-            rc, msg = run(tool + [rec["pdf"], os.path.join(out, "preview", "slide")], 120)
-            rec["png"] = sorted(glob.glob(os.path.join(out, "preview", "slide*.png")))
-            if rec["png"]:
-                break
-            rec["errors"].append("%s failed: %s" % (tool[0], msg.strip()[-160:]))
-        rc, f = run(["pdffonts", rec["pdf"]], 30)
-        rec["fonts"] = sorted({ln.split()[0].split("+")[-1] for ln in f.splitlines()[2:] if ln.strip()}) if rc == 0 else []
-        try:
-            z, _, layouts, _ = load(deck)
-            th = rd(z, next((n for n in sorted(z) if n.startswith("ppt/theme/theme")), ""))
-            want = set(re.findall(r'<a:(?:latin|ea) typeface="([^"+][^"]*)"', th)[:4])
-            got = " ".join(rec["fonts"]).replace("-", "").lower()
-            rec["substitutions"] = ["%s not embedded (renderer substituted another font)" % w for w in sorted(want) if w.replace(" ", "").lower() not in got.replace(" ", "")]
-        except Exception as e:
-            rec["errors"].append("font comparison skipped: %s" % e)
-    rec["status"] = "rendered" if rec["png"] else "pdf_only" if rec["pdf"] else "failed"
-    json.dump(rec, open(os.path.join(out, "render.json"), "w"), indent=1, ensure_ascii=False)
-    print("render: %s | pdf=%s pages=%s png=%d | fonts=%s | substitutions=%s%s" % (rec["status"], rec["pdf"], rec["pages"], len(rec["png"]), rec["fonts"][:6],
-          rec["substitutions"], "\nrender errors: %s" % rec["errors"] if rec["errors"] else ""))
-    print("record written to %s (status partial + exceptions.run_failures if not 'rendered')" % os.path.join(out, "render.json"))
+    para = [b for b in blocks if b is not cap and b[0][2] > lo and b[0][0] < hi and b[0][2] - b[0][0] > (hi - lo) * 0.6]
+    if table:
+        bot = min([b[0][1] for b in para if b[0][1] > y1 + 5] or [ph - 36]) - 2
+        top, bot = y0 - 2, min(bot, max([b[0][3] for b in blocks if y1 <= b[0][1] < bot] or [bot]) + 4)
+    else:
+        top, bot = max([b[0][3] for b in para if b[0][3] <= y0 + 1] or [36]) + 2, y1 + 2
+    lo, hi = max(lo, 18), min(hi, pw - 18)
+    k = dpi / 72.0
+    subprocess.run(["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page), "-x", str(int(lo * k)), "-y", str(int(top * k)), "-W", str(int((hi - lo) * k)),
+                    "-H", str(int((bot - top) * k)), "-png", "-singlefile", pdf, out[:-4] if out.endswith(".png") else out], check=True, timeout=120)
+    inside = [b[1][:40] for b in blocks if b[0][1] >= top - 1 and b[0][3] <= bot + 1 and b[0][0] >= lo - 1 and b[0][2] <= hi + 1]
+    print("cropped page %s [%.0f,%.0f,%.0f,%.0f]pt -> %s\ntext inside crop (should be axis labels/legend/caption, not body paragraphs): %s" % (page, lo, top, hi, bot, out, inside[:12]))
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3 or sys.argv[1] not in ("inspect", "build", "figcrop", "render", "paper"):
+    if len(sys.argv) < 3 or sys.argv[1] not in ("inspect", "build", "figcrop"):
         sys.exit(__doc__)
-    if sys.argv[1] == "render":
-        render(sys.argv[2])
-    elif sys.argv[1] == "paper":
-        paper(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else os.environ.get("WORK_DIR", "."))
-    elif sys.argv[1] == "figcrop":
-        a = [v for v in sys.argv[2:] if not v.startswith("--")]
-        figcrop(*a[:4], **dict({"dpi": int(a[4])} if len(a) > 4 else {}, keep_caption="--keep-caption" in sys.argv))
+    if sys.argv[1] == "figcrop":
+        figcrop(*sys.argv[2:6], **({"dpi": int(sys.argv[6])} if len(sys.argv) > 6 else {}))
     else:
         inspect(sys.argv[2], "--full" in sys.argv) if sys.argv[1] == "inspect" else build(sys.argv[2])
