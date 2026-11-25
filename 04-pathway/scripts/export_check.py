@@ -644,8 +644,14 @@ def assemble(a):
     for k in [k for k in res if k not in ck and (k in CONSUMED or k in ("editable_source", "export_artifact", "content_map", "versions", "artifacts", "run_notes"))]:
         del res[k]  # rebuilt below, so a re-run never keeps stale blocks
     B, run_notes = blocks(out, notes), list(notes.get("run_notes") or [])
-    st = word("failed" if not list(out.glob("*.svg")) else notes.get("status") or "partial", allowed)  # no figure = failed, whatever the notes say
-    reasons = notes.get("status_reasons") or B.pop("_auto_reasons", None) or ["see exceptions"]
+    open_ = B.pop("_open", [])  # missing exports / unmet workorder items; documented scientific caveats do not count
+    auto_st = "partial" if open_ else "complete"
+    if any("missing export" in o for o in open_) and str(notes.get("status", "")).lower() in ("complete", "completed", "success", "done"):
+        notes["status"] = "partial"  # an export is really missing: never reported as complete
+    st = word("failed" if not list(out.glob("*.svg")) else notes.get("status") or auto_st, allowed)  # no figure = failed, whatever the notes say
+    reasons = notes.get("status_reasons") or (open_ if st != "complete" and open_ else None) or (
+        ["all deliverables produced and every workorder item checked; %d documented caveat(s) in exceptions" % len([x for x in B.get("exceptions", []) if x.get("category") != "none"])]
+        if st == "complete" else B.get("_auto_reasons") or ["see exceptions"])
     B.pop("_auto_reasons", None)
     skel = lambda v: empty(v) or bool(re.search(r"生成中|^pending|in progress", json.dumps(v, ensure_ascii=False).strip('"'), re.I))  # noqa: E731
     given = notes.get("fields") or {}
@@ -684,7 +690,7 @@ def assemble(a):
     rc = check([])
     return 1 if bad else rc
 
-SKILL_VER = "bio-pathway-figure-lite 1.4"
+SKILL_VER = "bio-pathway-figure-lite 1.5"
 CONSUMED = {"fields", "status", "status_reasons", "run_notes", "edit_request", "summary", "compliance_checks", "exceptions", "change_log", "caption"}
 
 def blocks(out, notes):
@@ -724,13 +730,13 @@ def blocks(out, notes):
     told = json.dumps(exc, ensure_ascii=False).lower()
     skipped = [p.get("skipped") for p in pxs.values() if p.get("skipped")]
     if (not pxs or skipped) and "pixel" not in told:
-        exc.append({"category": "run_failure", "detail": "rendered pixel inspection not available: %s" % (skipped[0] if skipped else "not run"), "handling": "advisory check skipped; SVG/PDF kept"})
+        exc.append({"category": "check_skipped", "detail": "rendered pixel inspection not available: %s" % (skipped[0] if skipped else "not run"), "handling": "advisory check skipped; SVG/PDF kept"})
     miss = [f for f in ("png", "pdf") if not any(n.endswith("." + f) for n in ls)]
     if miss and "run_failure" not in told:
         exc.append({"category": "run_failure", "detail": "missing export format(s): %s" % miss, "handling": "see export_log.jsonl; no preview was faked"})
     left = [w for w in (cm.get("warnings") or []) if w.split(":")[0].lower()[:30] not in told]
     if left:
-        exc.append({"category": "run_failure", "detail": "layout warnings left after the allowed rebuilds: %s" % "; ".join(left[:5]), "handling": "kept; see %s_content_map.json" % stem})
+        exc.append({"category": "layout_note", "detail": "build notes left after the allowed rebuilds: %s" % "; ".join(left[:5]), "handling": "cosmetic; kept, see %s_content_map.json" % stem})
     B["exceptions"] = exc or [{"category": "none", "detail": "no open issues recorded", "handling": "-"}]
     v2 = [n for n in ls if "_v2" in n]
     B["change_log"] = [x for x in (notes.get("change_log") or []) if isinstance(x, dict)] or (
@@ -743,12 +749,15 @@ def blocks(out, notes):
                      "renderer": next((e.get("png_method") or e.get("pdf_method") for e in reversed(logs) if e.get("png_method") or e.get("pdf_method")), None),
                      "materials_sha256": {p: sha(p) for p in mats}}
     auto = "%s. Legend: %s." % (((jf(out / specs[0], {}) or {}).get("canvas") or {}).get("title", "Figure") if specs else "Figure",
-                               "; ".join("%s = %s" % (x.get("edge") or x.get("fill") or x.get("evidence"), x.get("label")) for x in (cm.get("legend") or []))) if cm else None
+                               "; ".join("%s = %s" % (x.get("edge") or x.get("evidence") or x.get("kind") or x.get("mod") or x.get("fill"), x.get("label")) for x in (cm.get("legend") or []) if not x.get("head"))) if cm else None
     B["caption"] = notes.get("caption") or ((out / "figure_caption.md").read_text(encoding="utf-8") if has("figure_caption.md") else auto)
     B["summary"] = notes.get("summary") or "%s: %d entities, %d relations, %d legend items; editable spec %s; exports %s; status reasons: %s" % (
         main or "no figure", len(cm.get("entities") or []), len(cm.get("relations") or []), len(cm.get("legend") or []), specs,
         [n for n in ls if n.endswith((".png", ".pdf"))], "; ".join(map(str, notes.get("status_reasons") or [])) or "see exceptions")
     B["_auto_reasons"] = [x.get("detail") for x in exc if x.get("category") not in ("none",)][:6] or None
+    B["_open"] = ([] if [x for x in cc if "advisory" not in str(x.get("requirement"))] else ["workorder items were not checked one by one (no compliance_checks in notes.json)"]) + [
+        str(x.get("detail")) for x in exc if x.get("category") in ("run_failure", "material_missing")][:4] + [
+        "workorder item not fully met: %s" % str(x.get("requirement"))[:120] for x in cc if str(x.get("result", "")).lower() in ("fail", "failed", "partial") and "advisory" not in str(x.get("requirement"))][:4]
     return B
 
 CMDS = {"skeleton": skeleton, "tools": tools, "render": render, "assemble": assemble, "check": check}

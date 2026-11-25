@@ -61,7 +61,7 @@ python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec_v2.json $OUT_DIR/figure_
 python3 $S/scripts/svgfig.py diff $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg > $OUT_DIR/edit_diff.json
 #  -> 132 ids kept; changes: n-tbk1-label text "TBK1" -> "TBK1 / (p-S172)", n-ifnar fill #FFFFFF -> #BBBBBB, legend-fill-bbbbbb added
 python3 $S/scripts/export_check.py assemble $WORK_DIR/notes.json   # notes 只含 status、reasons、compliance_checks、exceptions、edit_request
-#  -> assembled result.json: status=partial, 7 contract field(s) ...
+#  -> assembled result.json: status=partial, 7 contract field(s) ...   (示例里修改请求引入了原文没有的位点，且有一项工单为 partial)
 #  -> PASS: 7 contract field(s), status=partial, 0 fail / 0 warn
 ```
 第一次 build v2 时只改了颜色、没加图例项，pixcheck 提示 `node n-ifnar colour #BABABA has no legend swatch`；在 spec_v2 的 legend.items 加 `{"fill":"#BBBBBB","label":"recoloured on request (no data)"}` 后消失（提示不阻断交付，改一次即可）。
