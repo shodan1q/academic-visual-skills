@@ -3,7 +3,7 @@
 ## 用途
 把原始论文、figure 工单（如 `editable_relationship_schematic`）和数据表，变成一张**结构可逐条核对、排版不靠手填坐标**的科研示意图——包含/层级图、信号通路与分区、谱系/上下游图、实验流程图、因果机制链条——并能在源文件上按要求修改：
 
-- **原图标签当金标准**：`export_check.py figtext src.txt 3` 打印 Figure 3 的图注、原图里画着的文字标签（矢量 PDF 的文本层）和所有引用行号；实体名照原图写，漏画的要说明。
+- **范围由工单定，原图标签作对照**：先按工单关键词定位正文；工单或图注主题确认对应论文的 Figure N 时，`export_check.py figtext src.txt N` 打印该图的图注、原图里画着的文字标签（矢量 PDF 的文本层）和所有引用行号；实体名照原图写，漏画的要说明。
 - **只写结构，脚本排版**：spec 里写“子图 → 分区（parent）→ 节点（comp）”和分区内的 col/row，`svgfig.py build` 自动定尺寸、嵌套、网格对齐、等宽分栏，图例放在图下方分栏，脚注排在最下，画布自动扩展，不会裁切。边穿过别的节点时先自动改 L 形折线，边标签自动避让节点和其他标签。
 - **包含是嵌套，不是箭头**：膜、胞质、周质这类分区画成框中框；脚本检查子组不出界、兄弟组不交叠、节点完全落在所属组内，并把每条包含关系写进 content_map（`type: contains`）。
 - **关系语义固定**：step / flow / produce（合成、表达）/ phospho（磷酸转移）/ signal / activate / inhibit / bind / line 各有固定线型与端点；证据强度（direct / indirect / hypothesis）是独立的线型维度，“未检验”的关系不会画成实线；图例文字可按边改写成材料里的说法。
@@ -19,7 +19,7 @@
 |---|---|
 | `SKILL.md` | 运行时说明：9 步流程（目标 ≤ 25 次调用）、关系语法、图例与数据映射、自动排版 spec 示例、result.json 规则、异常处理 |
 | `scripts/svgfig.py` | `build` spec → 自动排版的分层 SVG + `*_content_map.json`（实体、关系含 contains、分区、图例、数据编码、导出几何），并告警：缺来源、子组出界、兄弟组交叠、节点不在所属组、step 与序号反向、边重叠/交叉/穿节点/穿图例、边标签被遮、标签溢出、图例缺项/多项、颜色无图例、类别颜色重复；`edit` 按 id 改源；`diff` 元素级改动（内容/布局分开） |
-| `scripts/export_check.py` | `tools` 探测渲染器与中文字体；`figtext` 找图注、原图标签与引用行；`render` SVG → PNG/PDF（rsvg-convert → cairosvg → inkscape → chrome → magick → soffice）并写 export_log.jsonl；`check` 核对 result.json（contract 字段、status 一个词、骨架“生成中”/模板槽残留、对照表里的 element_ids 是否真实存在、预览是否真实） |
+| `scripts/export_check.py` | `tools` 探测渲染器与中文字体；`figtext` 找图注、原图标签与引用行；`render` SVG → PNG/PDF（rsvg-convert → cairosvg → inkscape → chrome（含 playwright 自带的 chromium）→ 矢量 PDF 栅格化（pdftoppm/fitz）→ magick → 内置 matplotlib 渲染 → soffice；PDF 最后兜底为标准库矢量 PDF）并写 export_log.jsonl；`check` 核对 result.json（contract 字段、status 一个词、骨架“生成中”/模板槽残留、对照表里的 element_ids 是否真实存在、预览是否真实） |
 | `scripts/pixcheck.py` | 纯标准库解码渲染后的 PNG：图不空、不裁切；节点填色按声明渲染、标签有可见墨迹与足够对比度；节点颜色在图例里有同色色块；图例色块灰度可分；每种边样式有图例线。只给提示 |
 | `resources/checklist.md` | 脚本查不到、需要对照原文人工确认的项 |
 | `examples/README.md` | 最小调用示例（示例，合成数据） |
@@ -61,4 +61,6 @@ python3 $S/scripts/export_check.py check
 - CMYK、EPS、TIFF 依赖环境里的 inkscape/ImageMagick，缺失时记为缺口。
 
 ## 维护
+版本 lite-1.4（2026-11）：箭头/T 形端/圆点端改为普通图形元素（不用 SVG marker，ImageMagick、LibreOffice 等渲染器也不丢方向）；分区标题改为纯文字加底框；渲染链加入 playwright chromium、PDF 栅格化与内置渲染兜底；pixcheck 核对箭头与标题是否真的出现在像素里；被挡住的边自动绕行；超过一页高给出提示；范围以工单为准（figure_id 不当作论文图号）。
+
 版本 lite-1.3（2026-11）：新增自动排版（结构 spec，无需坐标）、图例分栏与画布自动扩展、最小字号自动达标、`figtext` 原图标签提取、`phospho`/`produce` 边类型与按边图例文字、边自动折线与标签避让、diff 区分内容与布局。保留 1.2 的九步流程、骨架残留检测、只提示不阻断的 pixcheck。旧 spec（显式坐标）照常可用。改脚本后用 examples/README.md 的示例重跑 build → render → pixcheck → check。

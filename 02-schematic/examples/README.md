@@ -26,6 +26,7 @@ table1_autoinducers.csv（示例）：`autoinducer,synthase,receptor,signal_clas
 ## 2. 找图注和原图标签（示例输出，节选）
 ```bash
 pdftotext -layout /input/source/paper.pdf /app/work/src.txt
+# 本例 case.json 明说 “Figure 3 of the source paper”，且图注主题与工单 title 一致，才用图号；否则按工单关键词 grep 正文
 python3 $S/scripts/export_check.py figtext /app/work/src.txt 3
 # caption of figure 3: src.txt:L84-88 (page 3)
 #   L84 Figure 3. Quorum-sensing circuit of V. harveyi. (a) At LCD the receptors LuxN, LuxPQ and CqsS act as kinases; ...

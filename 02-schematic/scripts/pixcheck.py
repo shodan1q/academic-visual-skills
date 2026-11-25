@@ -3,7 +3,8 @@
   pixcheck.py figure.svg [figure.png]      -> advisory only: prints WARN lines (exit 0), writes <stem>_pixel_check.json next to the SVG
 Checks: export PNG size/dpi; figure not blank or clipped; every node's fill is rendered as declared and its label leaves
 ink (not lost / not white-on-white); label-vs-fill contrast; every node colour has a legend swatch with the same rendered
-colour (legend = figure); legend swatches distinguishable in greyscale; every edge colour/dash has a legend line.
+colour (legend = figure); legend swatches distinguishable in greyscale; every edge colour/dash has a legend line;
+every arrow head / T-bar and every panel title is really in the image (direction and compartment names survive export).
 Large PNGs are inspected through a ~1200 px re-render of the same SVG with the same renderer chain (export_check.chain)."""
 import json, os, re, struct, sys, tempfile, zlib
 import xml.etree.ElementTree as ET
@@ -142,6 +143,27 @@ def main(a):
     lines = {sty(el) for el in lay.get("layer-legend", root).iter() if el.tag.endswith("line")}
     edges = {sty(el): el.get("id") for el in lay.get("layer-edges", root).iter() if el.tag.endswith("polyline")}
     Wn += ["edge style %s (e.g. %s) has no matching legend line" % (k, v) for k, v in edges.items() if lines and k not in lines and not any(k[1] and l[1] == k[1] for l in lines)]
+    # direction and naming must survive rendering: every arrow head / T-bar and every panel title has to leave ink
+    heads, lost_h, lost_t = [el for el in root.iter() if el.get("data-head")], [], []
+    for el in heads:
+        v = [float(x) for x in re.findall(r"-?[\d.]+", el.get("points") or "")] or [float(el.get(k, 0)) for k in ("x1", "y1", "x2", "y2")] if not el.get("cx") else [float(el.get("cx")), float(el.get("cy"))]
+        cx, cy, col = sum(v[::2]) / len(v[::2]), sum(v[1::2]) / len(v[1::2]), hexrgb(el.get("fill") if hexrgb(el.get("fill")) else el.get("stroke"))
+        near = [P(cx + dx, cy + dy) for dx in (-3, -1.5, 0, 1.5, 3) for dy in (-3, -1.5, 0, 1.5, 3)]
+        if col and not any(dist(c, col) <= 70 for c in near):
+            lost_h.append(el.get("id"))
+    Wn += ["arrow head / T-bar of %s is not in the rendered image (%d of %d lost): direction unreadable - this renderer dropped it; re-render with another one or report it" % (", ".join(lost_h[:6]), len(lost_h), len(heads))] if lost_h else []
+    for el in root.iter():
+        i, s_ = el.get("id") or "", " ".join("".join(el.itertext()).split())
+        if el.tag.endswith("text") and (i.endswith("-title") or i == "figure-title") and s_ and el.get("x"):
+            fs, x0, y0 = float(el.get("font-size", 14)), float(el.get("x")), float(el.get("y"))
+            wd = len(s_) * fs * 0.58
+            x0 -= wd / 2 if el.get("text-anchor") == "middle" else 0
+            smp = [P(x0 + wd * u / 40.0, y0 - fs * v / 6.0) for u in range(41) for v in range(1, 5)]
+            bg = max(set(smp), key=smp.count)
+            if not any(dist(c, bg) > 90 for c in smp):
+                lost_t.append("%s (%r)" % (i, s_[:30]))
+    Wn += ["title text not visible in the rendered image: %s" % "; ".join(lost_t[:6])] if lost_t else []
+    rep.update(arrow_heads={"declared": len(heads), "rendered": len(heads) - len(lost_h)}, titles_lost=lost_t)
     rep.update(nodes=nodes, legend_swatches={k: "#%02X%02X%02X" % v for k, v in legend.items()}, fails=F, warnings=Wn)
     outp = os.path.splitext(svg)[0] + "_pixel_check.json"
     json.dump(rep, open(outp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

@@ -4,7 +4,8 @@
 
 ## 实体（对照原文和 figure_content_map.json 的 entities）
 - [ ] 图上每个节点都能在原文/数据表找到；图注和结果段点名的实体没有漏画（漏了就写 exceptions）。
-- [ ] `figtext` 列出的原图标签：每个都已画出且写法一致（别名进 aliases），或在 compliance_checks / exceptions 说明为何不画。
+- [ ] 工单 must_show 每一项都有对应元素（范围以工单为准，figure_id 不是论文图号）；pixcheck 里箭头与分区标题都在渲染图中。
+- [ ] 用了 `figtext` 时，原图标签：与工单相关的都已画出且写法一致（别名进 aliases），或在 compliance_checks / exceptions 说明为何不画。
 - [ ] 数量、时间、浓度、阈值在摘要/结果/方法/图注里的说法已逐一对过；不一致的已列 exceptions: contradiction 并在图上加脚注。
 - [ ] 没有材料以外的实体、浓度、时间点、数值、单位；表中数值由 `categories.show` 自动上图，不手抄。
 - [ ] 同一实体在两个子图出现时，显示名与 `data` 键一致。
