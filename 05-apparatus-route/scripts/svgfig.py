@@ -13,9 +13,6 @@ from xml.sax.saxutils import escape
 EDGE = {"activate": ("", "tri", "#1B7837"), "inhibit": ("", "bar", "#B2182B"), "bind": ("", "dot", "#555555"),
         "modify": ("", "open", "#7B3294"), "transport": ("7,4", "tri", "#2166AC"), "indirect": ("2,4", "tri", "#777777"),
         "flow": ("", "tri", "#2166AC"), "signal": ("5,3", "tri", "#E08214"), "step": ("", "tri", "#333333"), "line": ("", "none", "#333333")}
-HEAD = {"tri": '<path d="M0,0 L10,5 L0,10 z" fill="%s"/>', "open": '<path d="M0,0 L10,5 L0,10" fill="none" stroke="%s" stroke-width="1.6"/>',
-        "bar": '<path d="M5,-1 L5,11" stroke="%s" stroke-width="3"/>', "dot": '<circle cx="6" cy="5" r="4" fill="%s"/>'}
-REF = {"tri": 9, "open": 9, "bar": 6, "dot": 10}
 FONT = "Arial, Helvetica, 'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', sans-serif"
 q = lambda s: escape(str(s), {'"': "&quot;"})  # noqa: E731
 CTX = ["start"]
@@ -41,6 +38,24 @@ def txt(i, x, y, lines, fs, o, src="", anchor="middle", color="#111111"):
     return '<text id="%s" x="%.1f" y="%.1f" font-size="%.1f" text-anchor="%s" fill="%s"%s data-src="%s">%s</text>' % (
         i, x, y, fs, anchor, o.get("color", color), st, q(src), sp)
 
+def head(i, kind, col, a, b, sw=2, s=""):
+    """End glyph at b for the segment a->b as plain polygon/polyline/line/circle (no <marker>: some rasterizers skip markers).
+    Returns (svg, point where the line itself should stop)."""
+    d = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 or 1.0
+    ux, uy, k = (b[0] - a[0]) / d, (b[1] - a[1]) / d, max(1.0, float(sw) / 2.0) ** 0.5
+    ln, hw, at = min(11.0 * k, max(d - 2, 4.0)), 5.0 * k, 'id="%s" data-src="%s"' % (i, q(s))
+    c, P = (b[0] - ux * ln, b[1] - uy * ln), "%.1f,%.1f %.1f,%.1f %.1f,%.1f"
+    w = (c[0] - uy * hw, c[1] + ux * hw, b[0], b[1], c[0] + uy * hw, c[1] - ux * hw)
+    if kind == "tri":
+        return '<polygon %s points="%s" fill="%s"/>' % (at, P % w, col), (c[0] + ux, c[1] + uy)
+    if kind == "open":
+        return '<polyline %s points="%s" fill="none" stroke="%s" stroke-width="1.6"/>' % (at, P % w, col), b
+    if kind == "bar":
+        return '<line %s x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="3"/>' % (at, b[0] - uy * hw * 1.2, b[1] + ux * hw * 1.2, b[0] + uy * hw * 1.2, b[1] - ux * hw * 1.2, col), b
+    if kind == "dot":
+        return '<circle %s cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>' % (at, b[0] - ux * 4 * k, b[1] - uy * 4 * k, 4 * k, col), b
+    return "", b
+
 def clip(n, px, py):
     dx, dy, hw, hh, sh = px - n["cx"], py - n["cy"], n["w"] / 2.0, n["h"] / 2.0, n.get("shape", "rect")
     if not (dx or dy):
@@ -58,10 +73,6 @@ def build(a):
         rows.append([o.get("id", "?"), kind, text, o.get("src", "")])
         warn.extend([] if o.get("src") else ["no src for %s %s" % (kind, o.get("id"))])
         return o.get("src", "")
-    def mk(head, col):
-        k = "m-%s-%s" % (head, col.strip("#"))
-        marks[k] = '<marker id="%s" viewBox="-1 -1 13 13" refX="%d" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse">%s</marker>' % (k, REF[head], HEAD[head] % col)
-        return k
     for p in sp.get("panels", []):
         CTX[0] = "panel %s" % p.get("id")
         s = src(p, "panel", p.get("title", ""))
@@ -92,7 +103,7 @@ def build(a):
         L["nodes"].append(txt(n["id"] + "-label", n["cx"], n["cy"] - (len(lines) - 1) * fs * 0.6 + fs * 0.35, lines, fs, n, s))
     for e in sp.get("edges", []):
         CTX[0] = "edge %s" % e.get("id")
-        dash, head, col = EDGE.get(e.get("type", "step"), EDGE["step"])
+        dash, head_, col = EDGE.get(e.get("type", "step"), EDGE["step"])
         col, s = e.get("color", col), src(e, "edge:" + e.get("type", "step"), e.get("label", ""))
         ends = [N.get(e[k]) if isinstance(e[k], str) else None for k in ("from", "to")]
         if any(isinstance(e[k], str) and not ends[i] for i, k in enumerate(("from", "to"))):
@@ -106,9 +117,16 @@ def build(a):
         for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
             warn += ["edge %s passes through node %s: add via points or move nodes" % (e.get("id"), k) for k, n in N.items() if all(n is not x for x in ends) and any(
                 abs(x1 + (x2 - x1) * f / 20.0 - n["cx"]) < n["w"] / 2.0 - 3 and abs(y1 + (y2 - y1) * f / 20.0 - n["cy"]) < n["h"] / 2.0 - 3 for f in range(1, 20))]
-        m = (' marker-end="url(#%s)"' % mk(head, col) if head != "none" else "") + (' marker-start="url(#%s)"' % mk(head, col) if e.get("both") and head != "none" else "")
-        L["edges"].append('<polyline id="%s" points="%s" fill="none" stroke="%s" stroke-width="%s"%s%s data-src="%s"/>' % (
-            e["id"], " ".join("%.1f,%.1f" % p for p in pts), col, e.get("width", 2), ' stroke-dasharray="%s"' % dash if dash else "", m, q(s)))
+        hd, lp = [], list(pts)  # heads are separate elements <edge id>-head / -head0; lp = line shortened under a filled head
+        if head_ != "none":
+            g, lp[-1] = head(e["id"] + "-head", head_, col, pts[-2], pts[-1], e.get("width", 2), s)
+            hd.append(g)
+            if e.get("both"):
+                g, lp[0] = head(e["id"] + "-head0", head_, col, pts[1], pts[0], e.get("width", 2), s)
+                hd.append(g)
+        L["edges"].append('<polyline id="%s" points="%s" fill="none" stroke="%s" stroke-width="%s"%s data-src="%s"/>' % (
+            e["id"], " ".join("%.1f,%.1f" % p for p in lp), col, e.get("width", 2), ' stroke-dasharray="%s"' % dash if dash else "", q(s)))
+        L["edges"].extend(hd)
         if e.get("label"):
             k = len(pts) // 2
             mx, my, lw = (pts[k - 1][0] + pts[k][0]) / 2.0, (pts[k - 1][1] + pts[k][1]) / 2.0, tw(e["label"], 12)
@@ -130,10 +148,11 @@ def build(a):
             i = "legend-%d" % k
             if it.get("edge"):
                 warn.extend([] if it["edge"] in EDGE else ["legend item %d: unknown edge type %r (drawn as step)" % (k, it["edge"])])
-                dash, head, col = EDGE.get(it["edge"], EDGE["step"])
+                dash, head_, col = EDGE.get(it["edge"], EDGE["step"])
                 col = it.get("color", col)
-                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="2"%s%s/>' % (i, lg["x"], y + 6, lg["x"] + 34, y + 6, col,
-                                   ' stroke-dasharray="%s"' % dash if dash else "", ' marker-end="url(#%s)"' % mk(head, col) if head != "none" else ""))
+                g, end = head(i + "-head", head_, col, (lg["x"], y + 6), (lg["x"] + 34, y + 6), 2, "legend")
+                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%.1f" y2="%s" stroke="%s" stroke-width="2"%s/>%s' % (i, lg["x"], y + 6, end[0], y + 6, col,
+                                   ' stroke-dasharray="%s"' % dash if dash else "", g))
             else:
                 L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="30" height="13" fill="%s" stroke="#555555"/>' % (i, lg["x"], y, it.get("fill", "#DDDDDD")))
             L["legend"].append(txt(i, lg["x"] + 44, y + 11, [it.get("label", "")], 12, {}, it.get("src", "legend"), "start"))
