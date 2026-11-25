@@ -79,3 +79,18 @@ v1.3 checker 在同一反例 deck 上还报出：88.8 改成 88.9（FAIL，论�
 主线+大纲 1、inspect 1、figcrop 1（三张图一条命令）、build 2、render 1、看 PNG 1、记录+assemble+checker 2）。
 回归：rt06 / rt08 / rt09 旧 spec 用 v1.3 kit 重建，keep/replace 与占位符落位不变（差别只在表格字号、auto-fit 与新的小图 WARN），
 v1.2 与 v1.3 checker 在三份 deck 上给出相同的 FAIL 集合。
+
+## 版本 1.4：单一 spec 生成全部记录 + 版面细节（内部记录，未做基础 Agent 对照）
+同一个合成案例 r2-06（10 页、12 分钟、4:3 模板），在 Linux x86_64 + LibreOffice 24.2 + Noto CJK 字体上分别用 v1.3 与 v1.4 构建并渲染，逐页看 PNG。
+
+| v1.3 的情况 | v1.4 做法 | v1.4 实测 |
+|---|---|---|
+| Agent 要手写 storyline.md、plan.md、spec.json、content_map.json、change_log.md、facts.json 六个文件，同一句主张抄三遍，容易对不上，也最耗时 | 只写 spec.json（slides 里带 role/evidence/seconds，顶层带 storyline/exceptions/uncertainty）；build 生成其余记录，assemble 直接读 | 按 SKILL.md 操作 9 次调用完成（v1.3 约 13 次）；content_map 10 行与页面一一对应 |
+| 证据映射只有定位，没法核对 | evidence.quote 在 paper.txt + paper_flow.txt 里查：verbatim / words found / NOT FOUND；每个页面数字列出它出现的论文页码 | 故意写错的一句短引被 build 报 WARN，并写进 compliance_checks |
+| 双栏论文的 paper.txt 左右栏串行，读正文和抄短引都容易错 | `paper` 另写阅读顺序的 paper_flow.txt，并打印各页起始行号 | 3 页双栏论文：跨行短引在 flow 文本里查到 |
+| 单位写成 cm-2、mS cm-1，化学式 LiPF6、H2O 没有上下标 | 单位指数自动上标；spec 的 `formulas` 列表自动下标 | 标题、正文、表头、图注里的单位和化学式都正确显示 |
+| 标题在单位中间折行（"1/2/5 wt" / "% TFEP"），或末行只剩一个字 | 两/三行标题在标点或空格处均衡断行，不拆数字和单位 | 10 页里 8 个多行标题（含三行的封面标题）都在标点或空格处断开 |
+| 图/表下面的要点固定 20 pt，表格页下方留白 | 字号按图表占用后的剩余高度取（模板字号以内，≥ min_pt），并关闭该文本框的自动缩小 | 表格页要点 24–28 pt，示意图页 26 pt |
+| 版式名写错 → 一律退到第 2 个版式；spec 语法错 → Python traceback | 按页面角色选版式（封面→含居中标题的版式）；语法错指出行号和常见原因 | 用通用版式名在自定义模板上构建：封面仍落在封面版式 |
+
+仍然存在的问题：三行封面标题的断行位置只按宽度均衡，可能断在词组中间；quote 核对对公式和扫描件无效；没有在 PowerPoint 里实测（只测了 LibreOffice）。

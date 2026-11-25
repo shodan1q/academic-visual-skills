@@ -3,7 +3,7 @@
 每项写进 result.json 的 compliance_checks：`{"check": ..., "result": "PASS|FAIL|WARN|未核对", "basis": "实测依据"}`。
 
 ## A. 主线（与论文自身贡献一致）
-- [ ] storyline.md 的贡献句能在 Abstract / Introduction / Conclusion 找到原句（写页码）
+- [ ] spec.json 的 `storyline`（写进 plan.md）的贡献句能在 Abstract / Introduction / Conclusion 找到原句（写页码）
 - [ ] 页序是 问题 → 方法 → 证据 → 结论/局限，不是章节顺序逐段搬运
 - [ ] 每组关键证据都有自己的页；支撑性细节放备注或合并
 - [ ] 局限页存在，内容来自原文的 Limitations / Discussion，不是自己推测
@@ -13,9 +13,10 @@
 - [ ] 页数符合工作单（"exactly N" = 正好 N 页；checker `--slides N`）
 - [ ] 结果页标题是结论句，不是 "Results"/"实验结果"
 - [ ] 每页正文 ≤ 5 条要点、≤ 2 级；build 无溢出 WARN（或已写明原因）
-- [ ] 每页时长写在 plan.md，合计 ≈ 规定时长
+- [ ] 每页 `seconds` 写在 spec（→ plan.md），合计 ≈ 规定时长（build 偏差超过 15% 会提示）
 
 ## C. 图表与数字
+- [ ] 每页 `evidence` 有定位和原文短引；content_map.json 里的 quote_check 没有 NOT FOUND（或已说明）
 - [ ] 页面上的每个图/表编号都在 paper.txt 的题注列表里，子图字母正确
 - [ ] 原图用 figcrop/pdfimages 取得，裁剪区文字是坐标轴/图例/题注，不是正文段落
 - [ ] 表格是原生表格，数值逐格与原文一致，表头有单位

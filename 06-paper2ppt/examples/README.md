@@ -15,7 +15,7 @@
 `paper.pdf`（示例论文，2 页）：Ce 掺杂 Co3O4 的 CO 氧化；Table 1 给 4 个样品的 T50 与 250 °C 转化率；Fig. 2 为 50 h 稳定性；
 第 4 节写了局限（未测水蒸气）。`target-template.pptx`：11 个标准版式（标题幻灯片、标题和内容、两栏内容……）。
 
-## 2. Agent 的调用序列（约 15 次调用）
+## 2. Agent 的调用序列（约 12 次调用）
 ```bash
 export SKILL_DIR=/skills/weekly-skill WORK_DIR=/app/work OUT_DIR=/app/output; K=$SKILL_DIR/scripts/pptx_kit.py
 cat /input/case.json; find /input -maxdepth 3 -type f; cat /input/artifacts/slide-workorder.json   # 1 读输入
@@ -26,9 +26,9 @@ json.dump(r, open("/app/output/result.json", "w"), ensure_ascii=False, indent=1)
 PY
 python3 $K paper /input/paper.pdf $WORK_DIR                       # 3 paper.txt + 节标题 + 全部题注与页码
 python3 $K inspect /input/target-template.pptx                    # 4 版式与占位符
-# 5 写 storyline.md / plan.md（问题→方法→Table 1→Fig. 2→结论与局限）
+# 5 读 paper_flow.txt 的相关段；主线、证据短引、时长都写进 spec.json（不单独写 storyline/plan/content_map）
 python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png  # 6 原图（去白边；题注打印出来写进 caption）
-python3 $K build $WORK_DIR/spec.json                              # 7 建页（无 WARN）
+python3 $K build $WORK_DIR/spec.json                              # 7 建页 + 写 content_map.json / plan.md / change_log.md
 python3 $K render $OUT_DIR/presentation.pptx      # PDF + preview PNG + pdffonts + render.json；无 LibreOffice 时照实记录
 python3 $SKILL_DIR/scripts/check_result.py --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
 python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --template /input/target-template.pptx --min-pt 18 --slides 6   # 9 自检
@@ -41,7 +41,8 @@ python3 $SKILL_DIR/scripts/check_result.py --paper $WORK_DIR/paper.txt --templat
   {"layout": "标题幻灯片", "title": "Ce 掺杂 Co3O4 的低温 CO 氧化", "subtitle": "论文汇报", "notes": "开场 30 秒：……"},
   {"layout": "标题和内容", "title": "1 wt% Ce 使 T50 从 285 °C 降到 243 °C",
    "table": [["样品", "T50 (°C)", "X250 (%)"], ["Co3O4", "285", "61.0"], ["1Ce", "243", "92.4"]],
-   "caption": "原文 Table 1（n = 3 均值）", "notes": "先看 1Ce 一行，再指出 2Ce 反而变差；被问误差：原文只给均值。"},
+   "caption": "原文 Table 1（n = 3 均值）", "role": "result", "seconds": 80,
+   "evidence": [{"locator": "Table 1, p.1", "quote": "T50 decreases from 285 °C to 243 °C"}], "notes": "先看 1Ce 一行，再指出 2Ce 反而变差；被问误差：原文只给均值。"},
   {"layout": "标题和内容", "title": "1Ce 在 250 °C 下 50 h 不失活", "body": ["XPS：O_ads/O_latt **0.42 → 0.71**"],
    "image": "/app/work/fig2.png", "caption": "原文 Fig. 2：250 °C 稳定性，50 h", "source_note": "Paper Fig. 2, Sec. 3, p.2",
    "notes": "氧空位是作者解释，证据强度中等。"}]}
@@ -68,3 +69,11 @@ package integrity OK (all XML well-formed, all relationship targets exist)
  "exceptions": {"material_gaps": [], "undecidable": ["氧空位机理仅 XPS 支持"], "run_failures": []}}
 ```
 checker 输出：`PASS: case_id ok, 7 contract fields filled, status=complete`
+
+build 之后 `$OUT_DIR/content_map.json` 的一行（示例）：
+```json
+{"slide": 4, "role": "result", "claim": "1 wt% Ce 使 T50 从 285 °C 降到 243 °C",
+ "evidence": [{"locator": "Table 1, p.1", "quote": "T50 decreases from 285 °C to 243 °C", "source": "paper.pdf", "quote_check": "verbatim on p.1"}],
+ "numbers": [{"value": "285", "paper_pages": [1]}, {"value": "243", "paper_pages": [1, 2]}, {"value": "92.4", "paper_pages": [1]}],
+ "visual": "native editable table 3x3", "seconds": 80, "confidence": "high"}
+```

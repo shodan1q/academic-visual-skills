@@ -3,23 +3,30 @@
 
   python3 pptx_kit.py inspect FILE.pptx [--full]  # theme fonts/colours, layouts+placeholders (inches), every slide's
                                                   # shapes by role (ph:title/ph:obj/text), table rows, pictures, notes
-  python3 pptx_kit.py build SPEC.json     # write the deck, print per-slide summary + overflow/placeholder/integrity warnings
+  python3 pptx_kit.py build SPEC.json [MORE_SLIDES.json]   # write the deck, print per-slide summary + overflow/placeholder/integrity warnings
   python3 pptx_kit.py paper paper.pdf /app/work     # paper.txt + pages/sections/every Fig./Table caption with page (2-column safe)
   python3 pptx_kit.py figcrop paper.pdf PAGE "Fig. 2" /app/work/fig2.png [DPI] [--keep-caption]   # crop by caption, trim margins,
                                                   # figure caption left OUT of the image (printed: put it on the slide)
-  python3 pptx_kit.py render /app/output/presentation.pptx   # soffice (2 tries, 120 s each) -> PDF, pdftoppm PNGs, pdffonts, render.json
+  python3 pptx_kit.py render /app/output/presentation.pptx   # soffice (2 tries, 120 s each) -> PDF, 100 dpi PNGs, pdffonts, render.json
 
 SPEC = {"template": "template.pptx|.potx|starting_deck.pptx", "out": "/app/output/deck.pptx",
         "footer": "optional footer text", "date": "optional", "slide_numbers": true,
         "slides": [
           {"keep": 3, "replace": {"old text": "new text"}, "notes": "..."},     # reuse slide 3 of the input file
           {"layout": "Title and Content" or 2, "title": "claim sentence", "subtitle": "...",
-           "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words"], "body2": ["right column"],
+           "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words", "Al_{2}O_{3}, cm^{-1}"], "body2": ["right column"],
            "font_size": 20, "image": "/app/work/fig2.png", "image_box": [x, y, w, h], "caption": "Fig. 2 ...",
            "table": [["head", "head"], ["1.0", "2.0"]], "table_box": [x, y, w, h], "table_size": 14,
            "source_note": "Paper Sec. 3, Table 1, p.2",   # -> layout placeholder named Source/Note/Ref, else small textbox above footer
-           "ph": {"13": ["text for placeholder idx 13"]}, "notes": "speaker notes", "source": "ignored by build"}],
-        "min_pt": 18}                           # optional: WARN when body text would render below this size
+           "ph": {"13": ["text for placeholder idx 13"]}, "notes": "speaker notes",
+           "role": "result", "seconds": 70, "confidence": "high", "uncertainty": "...",          # record fields (not drawn)
+           "evidence": [{"locator": "Fig. 2a, Sec. 3.1, p.5", "quote": "short phrase copied from paper.txt"}]}],
+        "min_pt": 18,                           # optional: WARN when body text would render below this size
+        "formulas": ["LiPF6", "H2O"],           # these get subscript digits everywhere; unit exponents (cm-2, g-1, m2) are automatic
+        "duration_min": 12, "storyline": {"problem": "...", "method": "...", "evidence": ["..."], "conclusion": "...", "limits": "..."},
+        "change": "what this rebuild changed"}  # -> change_log.md
+build also writes, next to the deck, content_map.json (evidence + quote check vs paper.txt + paper pages of every number),
+plan.md, spec.json and appends change_log.md - all derived from this one spec.
 Main body goes to the LARGEST body/obj placeholder (not the first one); every build prints "placed slide N: what->ph ..." - check it.
 Boxes are inches. Input slides that are not kept are dropped; masters, layouts, theme and media are never rewritten.
 Package files are edited as strings (no ElementTree re-serialisation), so namespaces/prefixes stay intact.
@@ -126,10 +133,36 @@ def inspect(path, full=False):
         n = notes_of(z, s)
         print("   [notes] " + ((n if full else n[:160]).replace("\n", " / ") if n else "(none)"))
 
+FORMULAS, UNITS = [], [True]
+UNIT = re.compile(r"(?<![A-Za-z])((?:cm|mm|nm|\u03bcm|\u00b5m|km|m|s|h|g|kg|mg|mL|L|mol|min|mAh|Ah|Wh|kWh|K|V|W|Pa|Hz|eV|J)\s?)([-\u2212][1-9])(?![\w.])|(?<![A-Za-z])(cm|mm|nm|\u03bcm|\u00b5m|km|m)([23])(?![\w.])")
+
+def markup(text):
+    """Plain text -> kit markup: unit exponents (mA cm-2, m2 g-1 -> superscript) and the formulas listed in spec "formulas"
+    (["LiPF6", "H2O"] -> subscript digits). Text that already carries _{..}/^{..} is left alone; "auto_units": false disables."""
+    t = str(text)
+    if "_{" in t or "^{" in t:
+        return t
+    for f in FORMULAS:
+        t = t.replace(f, re.sub(r"(?<=[A-Za-z)\]])(\d+(?:\.\d+)?)", r"_{\1}", f)) if f else t
+    if UNITS[0]:
+        t = UNIT.sub(lambda m: "%s^{%s}" % ((m.group(1).rstrip(" "), m.group(2)) if m.group(1) else (m.group(3), m.group(4))), t)
+    return t
+
 def runs(text, sz=None):
-    segs = re.split(r"\*\*", str(text))
-    return "".join('<a:r><a:rPr lang="zh-CN" altLang="en-US"%s%s dirty="0"/><a:t>%s</a:t></a:r>' % (' sz="%d"' % (sz * 100) if sz else "", ' b="1"' if i % 2 else "", escape(g))
-                   for i, g in enumerate(segs) if g) or '<a:endParaRPr lang="zh-CN"/>'
+    """**bold**, H_{2}O subscript, cm^{-1} / Ce^{3+} superscript (the markup never reaches the slide text); \\v = line break."""
+    out, bold = [], False
+    for g in re.split(r"(\*\*|_\{[^{}]*\}|\^\{[^{}]*\}|\v)", markup(text)):
+        if g == "\v":
+            out.append("<a:br/>")
+            continue
+        if g == "**":
+            bold = not bold
+            continue
+        base = ' baseline="-25000"' if g.startswith("_{") else ' baseline="30000"' if g.startswith("^{") else ""
+        g = g[2:-1] if base else g
+        if g:
+            out.append('<a:r><a:rPr lang="zh-CN" altLang="en-US"%s%s%s dirty="0"/><a:t>%s</a:t></a:r>' % (' sz="%d"' % (sz * 100) if sz else "", ' b="1"' if bold else "", base, escape(g)))
+    return "".join(out) or '<a:endParaRPr lang="zh-CN"/>'
 
 def items_of(items):
     items = items.split("\n") if isinstance(items, str) else items
@@ -141,10 +174,47 @@ def paras(items, sz=None):
 def xfrm(b):
     return '<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>' % tuple(int(v) for v in b)
 
+def plain(t):
+    """Visible characters of a markup string: **bold** markers and _{..}/^{..} wrappers removed (for width estimates)."""
+    return re.sub(r"[_^]\{([^{}]*)\}", r"\1", markup(t)).replace("**", "").replace("\v", "")
+
+def balance(title, box, sz):
+    """A title that needs two or three lines gets its line breaks at the most even phrase boundaries (after punctuation /
+    at a space), so it never wraps inside a unit or leaves a one-character last line. Returns the title with \\v at breaks."""
+    t = str(title)
+    if "\n" in t or "\v" in t or not box:
+        return t.replace("\n", "\v")
+    wd = lambda x: sum(1.05 if ord(c) > 0x2e80 else 0.62 for c in plain(x)) * sz * 0.9
+    cap = box[2] / 12700.0 - 14
+    if not cap * 1.08 < wd(t) <= cap * 2.8:  # clearly more than one line (the width estimate is conservative)
+        return t
+    cands = []
+    for m in re.finditer(r"[\uff0c\uff1a\uff1b\u3001,;:]\s?| (?=\S)|(?<=[\u4e00-\u9fff])(?=[A-Za-z0-9])", t):
+        a, b = t[:m.end()], t[m.end():]
+        if re.search(r"(\*\*|_\{|\^\{)[^*{}]*$", a) and re.match(r"[^*{}]*(\*\*|\})", b) or not b or re.match(r"(wt|vol|at|mol)?\s?%|[-\u2212\u00b0\u2103]|[a-zA-Z\u03bc\u03a9]{1,3}\b(?![a-z])", b) and re.search(r"\d\s?$", a):
+            continue  # never inside markup, never between a number and its unit
+        cands.append((m.end(), 0.22 * cap if re.match(r"[\uff0c\uff1a\uff1b\u3001,;:]", m.group(0)) else 0))
+    best = None
+    def cost_of(parts, bonus):
+        w = [wd(x) for x in parts]
+        return None if max(w) > cap * 0.95 else max(w) - min(w) - bonus + (0.1 * cap if w[-1] > w[0] * 1.6 else 0)
+    if wd(t) <= cap * 1.8:
+        for i, bo in cands:
+            c = cost_of([t[:i], t[i:]], bo)
+            if c is not None and (best is None or c < best[0]):
+                best = (c, t[:i] + "\v" + t[i:])
+    if best is None and wd(t) > cap * 1.9:  # really a three-line title: avoid a one-word last line
+        for x, (i, bi) in enumerate(cands):
+            for j, bj in cands[x + 1:]:
+                c = cost_of([t[:i], t[i:j], t[j:]], bi + bj)
+                if c is not None and (best is None or c < best[0]):
+                    best = (c, t[:i] + "\v" + t[i:j] + "\v" + t[j:])
+    return best[1] if best else t
+
 def fit_need(what, items, box, sz):
     """Rough, deliberately conservative estimate: CJK 1.05 em, latin 0.62 em, titles x0.9 (calibrated on LibreOffice renders), line 1.2 em, 0.25 in indent per level."""
     wpt, hpt = box[2] / 12700.0 - 14, box[3] / 12700.0 - 7
-    lines = sum(max(1, -(-sum(1.05 if ord(c) > 0x2e80 else 0.62 for c in t.replace("**", "")) * sz * (0.9 if what == "title" else 1) // max(wpt - 18 * l, 40))) for l, t in items_of(items))
+    lines = sum(max(1, -(-sum(1.05 if ord(c) > 0x2e80 else 0.62 for c in plain(t)) * sz * (0.9 if what == "title" else 1) // max(wpt - 18 * l, 40))) for l, t in items_of(items))
     return lines, lines * sz * 1.2, hpt
 
 def fit_warn(n, what, items, box, sz):
@@ -205,9 +275,12 @@ def add_notes_master(z, layouts, prels, pres, ctx):
 def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
     lay = s.get("layout", 2)
     lay = layouts[int(lay) - 1] if str(lay).isdigit() and int(lay) <= len(layouts) else next((l for l in layouts if l["name"].lower() == str(lay).lower()), None) or next((l for l in layouts if str(lay).lower() in l["name"].lower()), None)
-    if lay is None:
-        print("WARN slide %d: layout %r not found -> using layout 2; run inspect and pick a listed name" % (n, s.get("layout")))
-        lay = layouts[min(1, len(layouts) - 1)]
+    if lay is None:  # unknown name: choose by what the slide needs (cover -> centred-title layout, else the largest content placeholder)
+        types = lambda l: [p["type"] for p in phs(rd(z, l["path"]))]
+        cover = n == 1 or re.search(r"title slide|cover|封面|标题幻灯片", str(s.get("layout", "")), re.I) or s.get("role") in ("title", "cover", "封面")
+        two = s.get("body2") and next((l for l in layouts if sum(t in ("body", "obj") for t in types(l)) >= 2 and "title" in types(l)), None)
+        lay = (next((l for l in layouts if "ctrTitle" in types(l)), None) if cover else two or next((l for l in layouts if "title" in types(l) and ("obj" in types(l) or "body" in types(l))), None)) or layouts[min(1, len(layouts) - 1)]
+        print("WARN slide %d: layout %r not in this template -> using %r; layout names are listed by inspect" % (n, s.get("layout"), lay["name"]))
     L, sh, nid, used = phs(rd(z, lay["path"])), [], [2], []
     free = [p for p in L if p["type"] not in FOOT]
     R.append(("rId1", "slideLayout", "../slideLayouts/" + os.path.basename(lay["path"])))
@@ -232,8 +305,12 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
             what_note = " (auto-fit from template size)"
         else:
             what_note = ""
+        if what == "title" and g and S.get("balance_titles", True):
+            body = [balance(body[0], g, eff)]
+            what_note = " (2 lines, balanced break)" if "\v" in body[0] else ""
         add('<p:sp><p:nvSpPr><p:cNvPr id="@ID@" name="%s"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph %s/></p:nvPr></p:nvSpPr><p:spPr>%s</p:spPr>'
-            '<p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>' % (q(p["name"]), p["attrs"], xfrm(box) if box else "", paras(body, sz)))
+            '<p:txBody>%s<a:lstStyle/>%s</p:txBody></p:sp>' % (q(p["name"]), p["attrs"], xfrm(box) if box else "",
+            "<a:bodyPr><a:noAutofit/></a:bodyPr>" if sz and what in ("body", "body2") else "<a:bodyPr/>", paras(body, sz)))
         used.append("%s->ph %s idx%s %r %s %dpt%s" % (what, p["type"], p["idx"], p["name"], "%.1fx%.1fin" % (g[2] / EMU, g[3] / EMU) if g else "", eff, what_note))
         fit_warn(n, what, body, g, eff)
         if S.get("min_pt") and what in ("body", "body2") and eff < S["min_pt"]:
@@ -267,8 +344,12 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
         iw0, ih0 = imgsize(open(s["image"], "rb").read()) if s.get("image") else (len(s["table"][0]) * 2, 2)
         if iw0 / float(ih0) >= 1.45 or (s.get("table") and not s.get("image") and len(s["table"][0]) >= 4):
             # wide figure / wide table: full-width visual on top, short takeaway bullets underneath (readable sizes)
-            bsz = bsz or max(int(S.get("min_pt") or 18), 20)
-            bh = min(max(len(items_of(s["body"])) * bsz * 1.45 * 12700 + 0.25 * EMU, g1[3] * 0.2), g1[3] * 0.42)
+            lo_pt, capx = int(S.get("min_pt") or 18), (0.4 * EMU if s.get("caption") else 0)
+            vh = min(g1[2] * ih0 / float(iw0) + capx, g1[3] * 0.75) if s.get("image") else min(len(s["table"]) * 24 * 1.9 * 12700 + capx, g1[3] * 0.72)
+            hneed = lambda v: fit_need("body", s["body"], g1, v)[0] * v * 1.5 * 12700 + 0.3 * EMU
+            top_pt = min((b1 and b1["sz"]) or mpt(False), 28)  # takeaways under a figure: as large as the free space allows, never above the template size
+            bsz = bsz or next((v for v in range(top_pt - top_pt % 2, max(lo_pt, 20) - 1, -2) if hneed(v) <= g1[3] - vh - 0.1 * EMU), max(lo_pt, 20))
+            bh = min(max(hneed(bsz), g1[3] * 0.2), g1[3] * 0.45)
             vbox, tbox = [g1[0], g1[1], g1[2], g1[3] - bh - 0.08 * EMU], [g1[0], g1[1] + g1[3] - bh, g1[2], bh]
             if s.get("image") and not s.get("table"):  # very wide figure leaves a gap: move the takeaways up under figure + caption
                 shown = min(vbox[2] / iw0, (vbox[3] - (0.4 * EMU if s.get("caption") else 0)) / ih0) * ih0 + (0.4 * EMU if s.get("caption") else 0)
@@ -300,9 +381,11 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
                 '<a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
                 % (q(os.path.basename(s["image"])), rid, xfrm([x + (w - iw * k) / 2, y, iw * k, ih * k])))
             h = ih * k
-            if iw * k < 0.55 * cx and ih * k < 0.6 * cy:
-                print("WARN slide %d: figure is only %.1fx%.1fin on a %.1fin-wide slide (axis labels unreadable?) -> use a Title+Content layout "
-                      "(wide figure + short body stacks automatically), drop the body, or give image_box" % (n, iw * k / EMU, ih * k / EMU, cx / EMU))
+            st = any(u.startswith("stacked") for u in used)  # already full-width on top: only a much smaller figure is worth a rebuild
+            if iw * k < (0.5 if st else 0.55) * cx and ih * k < 0.6 * cy:
+                print("WARN slide %d: figure is only %.1fx%.1fin on a %.1fin-wide slide (axis labels unreadable?) -> %s" % (n, iw * k / EMU, ih * k / EMU, cx / EMU,
+                      "keep 1 short body line (rest into notes) or drop the body" if st else
+                      "use a Title+Content layout (wide figure + short body stacks automatically), drop the body, or give image_box"))
         capsp = lambda yy: add('<p:sp><p:nvSpPr><p:cNvPr id="@ID@" name="Caption"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>'
             '<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:pPr algn="ctr"/>%s</a:p></p:txBody></p:sp>' % (xfrm([x, yy, w, cap]), runs(s["caption"], s.get("caption_size", 14))))
         cph = pic and s.get("caption") and s.get("image") and big(0.0)
@@ -318,7 +401,7 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
                 capsp(y)  # table caption above the table
                 y += cap
             nc = max(len(r) for r in rows)
-            cw = lambda c, z: sum(1.05 if ord(ch) > 0x2e80 else 0.58 for ch in str(c).replace("**", "")) * z + 16  # pt incl. cell margins
+            cw = lambda c, z: sum(1.05 if ord(ch) > 0x2e80 else 0.58 for ch in plain(c)) * z + 16  # pt incl. cell margins
             need = lambda z: [max([cw(r[j], z) for r in rows if j < len(r)] + [36]) for j in range(nc)]
             fits = lambda z: sum(need(z)) <= w / 12700.0 and len(rows) * z * 1.9 <= h / 12700.0
             tsz = s.get("table_size") or next((z for z in (24, 22, 20, 18, 16, 14) if fits(z)), 14)
@@ -345,8 +428,21 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
             add(b if p["type"] == "sldNum" or not val else re.sub(r"<a:p(?=[ >]).*</a:p>", lambda m: paras([val]), b, flags=re.S))
     return HEAD + '<p:sld %s><p:cSld><p:spTree>%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>' % (NS, GRP, "".join(sh)), lay["name"]
 
-def build(spec_path):
-    S = json.load(open(spec_path, encoding="utf-8"))
+def load_spec(path):
+    try:
+        return json.loads(open(path, encoding="utf-8").read())
+    except ValueError as e:  # show where the JSON breaks instead of a traceback
+        ln = getattr(e, "lineno", 0)
+        src = open(path, encoding="utf-8").read().splitlines()
+        sys.exit("ERROR %s is not valid JSON: %s\n  line %s: %s\n  (common causes: unescaped \" inside a string, trailing comma, a real line break inside a string - use \\n)" % (path, e, ln, src[ln - 1][:160] if 0 < ln <= len(src) else ""))
+
+def build(spec_path, more=()):
+    S = load_spec(spec_path)
+    for extra in more:  # a long deck can be written as several files: slides of later files are appended
+        x = load_spec(extra)
+        S["slides"] = list(S.get("slides") or []) + list(x.get("slides") if isinstance(x, dict) else x)
+    FORMULAS[:] = sorted([str(f) for f in S.get("formulas") or [] if re.search(r"[A-Za-z)\]]\d", str(f))], key=len, reverse=True)
+    UNITS[0] = S.get("auto_units", True) is not False
     z, old, layouts, (cx, cy) = load(S["template"])
     keep = {i: (rd(z, s), rd(z, relpath(s)), notes_of(z, s)) for i, s in enumerate(old, 1)}
     ctx = [rd(z, "[Content_Types].xml").replace("presentationml.template.main+xml", "presentationml.presentation.main+xml")]
@@ -401,48 +497,102 @@ def build(spec_path):
         for name in ["[Content_Types].xml"] + sorted(n for n in z if n != "[Content_Types].xml"):
             zf.writestr(name, z[name])
     print("wrote %s (%d slides)" % (S["out"], len(S["slides"])))
+    try:
+        records(S, spec_path)
+    except Exception as e:  # records are derived extras: never fail the build because of them
+        print("note: records not written (%s) - write content_map.json / plan.md by hand" % e)
 
-def png_ink_box(path, thr=242):
-    """Bounding box (x0, y0, x1, y1, w, h) in pixels of non-white pixels of an 8-bit RGB/gray PNG (stdlib zlib decode)."""
-    import zlib
-    d = open(path, "rb").read()
-    w, h, bd, ct, _, _, il = struct.unpack(">IIBBBBB", d[16:29])
-    if bd != 8 or il or ct not in (0, 2, 6):
-        return None
-    bpp, i, idat = {0: 1, 2: 3, 6: 4}[ct], 8, b""
-    while i < len(d):
-        ln, typ = struct.unpack(">I4s", d[i:i + 8])
-        idat += d[i + 8:i + 8 + ln] if typ == b"IDAT" else b""
-        i += 12 + ln
-    raw, stride, prev, rows = zlib.decompress(idat), w * bpp, bytearray(w * bpp), []
-    for y in range(h):
-        f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
-        for x in range(stride) if f else ():
-            a, b, c = line[x - bpp] if x >= bpp else 0, prev[x], prev[x - bpp] if x >= bpp else 0
-            if f == 1: line[x] = (line[x] + a) & 255
-            elif f == 2: line[x] = (line[x] + b) & 255
-            elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
-            elif f == 4:
-                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
-                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
-        rows.append(line)
-        prev = line
-    if bpp == 4:  # drop alpha
-        rows = [bytearray(b for j, b in enumerate(r) if j % 4 != 3) for r in rows]
-        bpp, stride = 3, w * 3
-    ys = [y for y in range(h) if min(rows[y]) < thr]
-    if not ys:
-        return None
-    colmin = bytearray([255]) * stride
-    for y in ys:
-        r = rows[y]
-        colmin = bytearray(map(min, colmin, r))
-    xs = [x for x in range(w) if min(colmin[x * bpp:(x + 1) * bpp]) < thr]
-    return (xs[0], ys[0], xs[-1] + 1, ys[-1] + 1, w, h) if xs else None
+def records(S, spec_path):
+    """Derive the review records from the SAME spec that built the deck (one source, so they cannot drift apart):
+    content_map.json (claim, evidence, quote check against paper.txt, numbers with the paper pages they occur on, visual
+    kind, notes, time), plan.md (storyline + page plan + time budget), spec.json copy, change_log.md (one entry per build)."""
+    import datetime, shutil
+    od = os.path.dirname(os.path.abspath(S["out"]))
+    if S.get("records") is False:
+        return
+    ptxt = S.get("paper_text") or os.path.join(os.environ.get("WORK_DIR", os.path.dirname(os.path.abspath(spec_path))), "paper.txt")
+    rdp = lambda f: open(f, encoding="utf-8", errors="ignore").read().split("\f") if os.path.exists(f) else []
+    pages, flow = rdp(ptxt), rdp(os.path.join(os.path.dirname(ptxt), "paper_flow.txt"))
+    nrm = lambda t: re.sub(r"\s+", " ", re.sub(r"(?<=[a-z])-\s*\n\s*(?=[a-z])", "", str(t).replace("\ufb01", "fi").replace("\ufb02", "fl").replace("\ufb00", "ff").replace("\ufb03", "ffi")).replace("\u2212", "-").replace("\u2013", "-").replace("\u2225", "||")).strip().lower()
+    npages = [nrm(pg) + " " + nrm(flow[i] if i < len(flow) else "") for i, pg in enumerate(pages)]
+    def where(quote):  # -> (verdict, page)
+        qn = nrm(quote).strip(" .\"'\u201c\u201d")
+        if not npages or len(qn) < 6:
+            return ("not checked (no paper.txt)" if not npages else "too short to check"), None
+        for i, pg in enumerate(npages, 1):
+            if qn in pg:
+                return "verbatim", i
+        tok = re.findall(r"[\w.%]+", qn)
+        best = max(((sum(1 for w in tok if w in pg) / float(len(tok) or 1), -i) for i, pg in enumerate(npages, 1)), default=(0, 0))
+        return ("words found (line breaks/columns differ)" if best[0] >= 0.85 else "NOT FOUND in paper text"), (-best[1] if best[0] >= 0.85 else None)
+    num_rx = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?:\s?%)?")
+    rows, miss, tot = [], [], 0
+    for n, sl in enumerate(S["slides"], 1):
+        ev = sl.get("evidence") or sl.get("source") or sl.get("source_note") or []
+        ev = [ev] if isinstance(ev, (str, dict)) else list(ev)
+        evo = []
+        for e in ev:
+            e = {k: v for k, v in e.items() if v not in (None, "")} if isinstance(e, dict) else {"locator": str(e)}
+            e.setdefault("source", S.get("paper_name") or "paper.pdf")
+            if e.get("quote"):
+                v, pg = where(e["quote"])
+                e["quote_check"] = v + (" on p.%d" % pg if pg else "")
+                said = re.search(r"p{1,2}\.?\s?(\d+)", str(e.get("locator", "")))
+                if pg and said and int(said.group(1)) != pg and nrm(e["quote"]) not in (npages[int(said.group(1)) - 1] if int(said.group(1)) <= len(npages) else ""):
+                    e["quote_check"] += " (locator says p.%s)" % said.group(1)
+                if v.startswith("NOT"):
+                    miss.append("slide %d: %r" % (n, str(e["quote"])[:50]))
+            evo.append(e)
+        vis_txt = " ".join([str(sl.get("title", "")), str(sl.get("subtitle", ""))] + [str(b) for k in ("body", "body2") for b in (sl.get(k) if isinstance(sl.get(k), list) else [sl.get(k) or ""])] +
+                           [str(c) for r in sl.get("table") or [] for c in r])
+        nums = []
+        for v in sorted(set(x.replace(" ", "") for x in num_rx.findall(plain(vis_txt))), key=lambda x: vis_txt.find(x.rstrip("%"))):
+            core = v.rstrip("%")
+            if len(core) < 2 and "." not in core:
+                continue
+            pg = [i for i, t in enumerate(pages, 1) if re.search(r"(?<![\d.])%s(?![\d]|\.\d)" % re.escape(core), t)]
+            nums.append({"value": v, "paper_pages": pg[:6]} if pages else {"value": v})
+        visual = ("native editable table %dx%d" % (len(sl["table"]), max(len(r) for r in sl["table"])) if sl.get("table") else "") + \
+                 ((" + " if sl.get("table") else "") + "paper figure crop %s" % os.path.basename(sl["image"]) if sl.get("image") else "") or ("kept input slide %s" % sl["keep"] if "keep" in sl else "text only")
+        sec = sl.get("seconds") or sl.get("time_s") or 0
+        tot += sec if isinstance(sec, (int, float)) else 0
+        row = {"slide": n, "role": sl.get("role") or ("title" if n == 1 else ""), "claim": plain(sl.get("title", "")), "layout": sl.get("layout"), "evidence": evo,
+               "numbers": nums, "visual": visual + (" (%s)" % sl["visual_kind"] if sl.get("visual_kind") else ""), "caption": plain(sl.get("caption", "")) or None,
+               "on_slide_source": sl.get("source_note"), "notes_summary": str(sl.get("notes") or "")[:160], "seconds": sec or None,
+               "confidence": sl.get("confidence") or ("high" if evo and not any("NOT" in str(e.get("quote_check", "")) for e in evo) else "medium" if evo else "low"),
+               "uncertainty": sl.get("uncertainty") or None}
+        rows.append({k: v for k, v in row.items() if v not in (None, "", [])})
+    json.dump(rows, open(os.path.join(od, "content_map.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    st = S.get("storyline") or {}
+    md = ["# Talk plan (derived from spec.json by pptx_kit.py build)", ""]
+    if st:
+        md += ["## Storyline (the paper's own contribution, not its section order)", ""] + ["- **%s**: %s" % (k, v if isinstance(v, str) else "; ".join(str(x) for x in v)) for k, v in (st.items() if isinstance(st, dict) else [("line", st)])] + [""]
+    cell = lambda t: str(t).replace("|", "\\|").replace("\n", " ")
+    md += ["## Page plan", "", "| slide | role | claim (title) | evidence | visual | time (s) |", "|---|---|---|---|---|---|"]
+    md += ["| %d | %s | %s | %s | %s | %s |" % (r["slide"], cell(r.get("role", "")), cell(r.get("claim", "")), cell("; ".join(str(e.get("locator", "")) for e in r.get("evidence", []))), cell(r.get("visual", "")), r.get("seconds", "")) for r in rows]
+    dur = S.get("duration_min")
+    md += ["", "Slides: %d. Planned speaking time: %s%s." % (len(rows), "%d s (%.1f min)" % (tot, tot / 60.0) if tot else "not given per slide", " of %s min allowed" % dur if dur else "")]
+    open(os.path.join(od, "plan.md"), "w", encoding="utf-8").write("\n".join(md) + "\n")
+    if os.path.abspath(spec_path) != os.path.join(od, "spec.json"):  # the complete (merged) spec: rebuild with `pptx_kit.py build spec.json`
+        json.dump(S, open(os.path.join(od, "spec.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    log = os.path.join(od, "change_log.md")
+    k = len(re.findall(r"^## build ", open(log, encoding="utf-8").read(), re.M)) + 1 if os.path.exists(log) else 1
+    with open(log, "a", encoding="utf-8") as f:
+        f.write("%s## build %d - %s\n- %d slides on template %s -> %s\n- change: %s\n" % ("" if k > 1 else "# Change log (one entry per build; appended by pptx_kit.py)\n\n", k,
+                datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), len(rows), os.path.basename(S["template"]), os.path.basename(S["out"]), S.get("change") or ("first build" if k == 1 else "rebuild (see spec.json)")))
+    noev = [r["slide"] for r in rows if not r.get("evidence") and r.get("role") not in ("title", "封面", "cover", "Q&A", "致谢")]
+    print("records: content_map.json (%d rows), plan.md, spec.json, change_log.md (build %d) -> %s" % (len(rows), k, od))
+    if tot and dur and abs(tot - float(dur) * 60) > float(dur) * 60 * 0.15:
+        print("WARN time budget: slides add up to %d s, the talk is %s min -> adjust \"seconds\"/content" % (tot, dur))
+    if noev[1 if noev[:1] == [1] else 0:]:
+        print("WARN no \"evidence\" on slides %s -> add [{\"locator\": \"Fig. 2, Sec. 3.1, p.5\", \"quote\": \"short phrase copied from paper.txt\"}]" % noev[1 if noev[:1] == [1] else 0:])
+    if miss:
+        print("WARN evidence quotes not found in paper.txt (copy a short phrase exactly, or fix the locator): %s" % "; ".join(miss[:6]))
 
 def figcrop(pdf, page, label, out, dpi=200, keep_caption=False):
-    """Crop a figure/table from a PDF page via pdftotext -bbox-layout + pdftoppm (poppler), trim white margins, print the
-    caption text and the words inside the crop. Figures are cropped WITHOUT their caption (put it on the slide as editable text)."""
+    """Crop a figure/table from a PDF page via pdftotext -bbox-layout + pdftoppm (poppler). Figures: the caption is left OUT of
+    the picture (put "Paper Fig. N ..." on the slide as editable text; --keep-caption keeps it), white margins are trimmed, a
+    caption that sits ABOVE its figure is handled, and a caption with no figure pixels next to it is reported."""
     import subprocess, tempfile
     x = subprocess.run(["pdftotext", "-bbox-layout", "-f", str(page), "-l", str(page), pdf, "-"], capture_output=True, text=True, timeout=60).stdout
     pg = re.search(r'<page width="([\d.]+)" height="([\d.]+)"', x)
@@ -461,30 +611,51 @@ def figcrop(pdf, page, label, out, dpi=200, keep_caption=False):
     lo, hi = (0, pw / 2) if twocol and x1 < pw * 0.55 else (pw / 2, pw) if twocol and x0 > pw * 0.45 else (0, pw)
     prose = lambda b: len(b[1].split()) >= 6 and b[1].rstrip().endswith((".", "。", ":", ";")) or b[0][2] - b[0][0] > (hi - lo) * 0.6
     para = [b for b in blocks if b is not cap and b[0][2] > lo and b[0][0] < hi and prose(b)]  # body text bounds the crop
-    if table:
+    lo, hi, k = max(lo, 18), min(hi, pw - 18), dpi / 72.0
+    def ink(l, t, r, bt):  # bounding box (pt) of non-white pixels in a region, from a 50 dpi greyscale render; None if blank
+        if bt - t < 6 or r - l < 6:
+            return None
+        try:
+            tmp, g = tempfile.mkdtemp(prefix="figcrop_"), 50 / 72.0
+            subprocess.run(["pdftoppm", "-gray", "-r", "50", "-f", str(page), "-l", str(page), "-x", str(int(l * g)), "-y", str(int(t * g)), "-W", str(max(1, int((r - l) * g))),
+                            "-H", str(max(1, int((bt - t) * g))), "-singlefile", pdf, os.path.join(tmp, "p")], check=True, timeout=60, capture_output=True)
+            d = open(os.path.join(tmp, "p.pgm"), "rb").read()
+            hd = re.match(rb"P5\s+(\d+)\s+(\d+)\s+(\d+)\s", d)
+            w, h, px = int(hd.group(1)), int(hd.group(2)), d[hd.end():]
+            rows = [i for i in range(h) if min(px[i * w:(i + 1) * w] or b"\xff") < 235]
+            cols = [j for j in range(w) if min(px[j::w][:h] or b"\xff") < 235]
+            return (l + cols[0] / g - 3, t + rows[0] / g - 3, l + (cols[-1] + 1) / g + 3, t + (rows[-1] + 1) / g + 3) if rows and cols else None
+        except Exception as e:
+            print("(margin trim skipped: %s)" % e)
+            return (l, t, r, bt)
+    other = [b for b in blocks if b is not cap and lo - 5 <= b[0][0] < hi and len(b[1].split()) <= 30 and (re.match(r"\d{1,2}(\.\d{1,2})*\.?\s+[A-Z\u4e00-\u9fff][a-z\u4e00-\u9fff]", b[1])
+             or re.match(r"(Fig(ure)?\.?|Table|Tab\.|Scheme|图|表)\s*S?\d+[a-z]?\s*[.:|：]", b[1]))]  # section headings + other captions bound a figure
+    if table:  # tables: caption above + rows below, kept together; stops at body text or the next section heading
         head = [b for b in blocks if re.match(r"(\d{1,2}(\.\d{1,2})*\.?$|\d{1,2}(\.\d{1,2})*\.?\s+[A-Z\u4e00-\u9fff]|[IVX]+\.)", b[1]) and lo - 5 <= b[0][0] < hi]
         bot = min([b[0][1] for b in para + head if b[0][1] > y1 + 5] or [ph - 36]) - 2
-        top, bot = y0 - 2, min(bot, max([b[0][3] for b in blocks if y1 <= b[0][1] < bot] or [bot]) + 4)
-    else:
-        top, bot = max([b[0][3] for b in para if b[0][3] <= y0 + 1] or [30]) + 2, (y1 + 2 if keep_caption else y0 - 1)
-    lo, hi = max(lo, 18), min(hi, pw - 18)
-    tmp = tempfile.mkdtemp(prefix="figcrop_")
-    try:  # trim white margins on a 72-dpi probe render, then render the tight box at full dpi
-        subprocess.run(["pdftoppm", "-r", "72", "-f", str(page), "-l", str(page), "-x", str(int(lo)), "-y", str(int(top)), "-W", str(int(hi - lo)),
-                        "-H", str(int(bot - top)), "-png", "-singlefile", pdf, os.path.join(tmp, "probe")], check=True, timeout=120)
-        bb = png_ink_box(os.path.join(tmp, "probe.png"))
-        if bb:
-            lo, top, hi, bot = lo + max(bb[0] - 4, 0), top + max(bb[1] - 4, 0), lo + min(bb[2] + 4, bb[4]), top + min(bb[3] + 4, bb[5])
-    except Exception as e:
-        print("note: margin trim skipped (%s)" % e)
-    k = dpi / 72.0
-    subprocess.run(["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page), "-x", str(int(lo * k)), "-y", str(int(top * k)), "-W", str(int((hi - lo) * k)),
-                    "-H", str(int((bot - top) * k)), "-png", "-singlefile", pdf, out[:-4] if out.endswith(".png") else out], check=True, timeout=120)
-    inside = [b[1][:40] for b in blocks if b[0][1] >= top - 1 and b[0][3] <= bot + 1 and b[0][0] >= lo - 1 and b[0][2] <= hi + 1]
-    print("cropped page %s [%.0f,%.0f,%.0f,%.0f]pt (%.1f x %.1f in, aspect %.2f) -> %s" % (page, lo, top, hi, bot, (hi - lo) / 72, (bot - top) / 72, (hi - lo) / max(bot - top, 1), out))
-    print("caption (%s; put the label + a short version on the slide as editable text):\n  %s" % ("kept in crop" if keep_caption or table else "NOT in the image", cap[1][:300]))
-    print("text inside crop (should be axis labels/legend/panel letters, not body paragraphs): %s" % inside[:12])
-    if any(b[2] >= 3 and len(b[1].split()) >= 5 * b[2] and b is not cap for b in blocks if b[0][1] >= top - 1 and b[0][3] <= bot + 1 and b[0][0] >= lo - 1 and b[0][2] <= hi + 1):
+        top, bot = y0 - 2, min(bot, max([b[0][3] for b in blocks if y1 <= b[0][1] < bot] or [bot]) + 12)  # room for the bottom rule; ink() trims
+        box, where = ink(lo, top, hi, bot) or (lo, top, hi, bot), "table incl. its caption"
+    else:  # figure above its caption; if that region is blank, the caption sits above the figure
+        txt = [b for b in blocks if b is not cap and b[0][2] > lo and b[0][0] < hi and (prose(b) or b[0][2] - b[0][0] > (hi - lo) * 0.4 and len(b[1].split()) >= 6)]
+        above = (lo, max([b[0][3] for b in txt + other if b[0][3] <= y0 + 1] or [30]) + 2, hi, y0 - 1)
+        below = (lo, y1 + 1, hi, min([b[0][1] for b in para + other if b[0][1] > y1 + 1] or [ph - 36]) - 2)
+        box, where = ink(*above), "figure above caption (caption NOT in the image)"
+        if box and keep_caption:
+            box, where = (box[0], box[1], box[2], y1 + 2), "figure above caption (caption kept)"
+        if not box:
+            box, where = ink(*below), "figure below caption (caption NOT in the image)"
+            if box and keep_caption:
+                box, where = (box[0], y0 - 2, box[2], box[3]), "figure below caption (caption kept)"
+        if not box:
+            box, where = (lo, above[1], hi, y1 + 2), "WARN no figure pixels next to the caption: the PDF may not contain this figure -> do not insert it, record a material gap"
+    l, t, r, bt = max(box[0], 0), max(box[1], 0), min(box[2], pw), min(box[3], ph)
+    subprocess.run(["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page), "-x", str(int(l * k)), "-y", str(int(t * k)), "-W", str(int((r - l) * k)),
+                    "-H", str(int((bt - t) * k)), "-png", "-singlefile", pdf, out[:-4] if out.endswith(".png") else out], check=True, timeout=120)
+    within = [b for b in blocks if b[0][1] >= t - 1 and b[0][3] <= bt + 1 and b[0][0] >= l - 1 and b[0][2] <= r + 1]
+    print("cropped page %s [%.0f,%.0f,%.0f,%.0f]pt (%.1f x %.1f in, aspect %.2f; %s) -> %s" % (page, l, t, r, bt, (r - l) / 72, (bt - t) / 72, (r - l) / max(bt - t, 1), where, out))
+    print("caption (put the label + a short version on the slide as editable text):\n  %s" % cap[1][:300])
+    print("text inside crop (should be axis labels/legend/panel letters, not body paragraphs): %s" % [b[1][:40] for b in within][:12])
+    if any(b[2] >= 3 and len(b[1].split()) >= 5 * b[2] and b is not cap for b in within):
         print("WARN crop contains a multi-line text block - may be a body paragraph; check the PNG or use pdfimages")
 
 def paper(pdf, outdir):
@@ -501,7 +672,15 @@ def paper(pdf, outdir):
         sys.exit("pdftotext failed (%s) - encrypted? try qpdf --decrypt; scanned? pdftoppm + tesseract" % r.stderr.strip()[-200:])
     pages = open(txt, encoding="utf-8", errors="ignore").read().split("\f")
     pages = pages[:-1] if pages and not pages[-1].strip() else pages
-    print("paper.txt: %s (%d pages, %d chars)" % (txt, len(pages), sum(len(p) for p in pages)))
+    print("paper.txt: %s (%d pages, %d chars; layout kept - use it for tables)" % (txt, len(pages), sum(len(p) for p in pages)))
+    try:  # reading-order text: columns are not interleaved, so prose can be read and quoted line by line
+        flow = os.path.join(outdir, "paper_flow.txt")
+        subprocess.run(["pdftotext", pdf, flow], capture_output=True, text=True, timeout=120)
+        fp = open(flow, encoding="utf-8", errors="ignore").read().split("\f")
+        print("paper_flow.txt: %s (reading order, one column at a time - READ and QUOTE prose from this file; page N starts at line %s)" % (
+            flow, ", ".join("p%d:%d" % (i + 1, 1 + sum(x.count("\n") for x in fp[:i])) for i in range(min(len(fp), 40)) if fp[i].strip())))
+    except Exception as e:
+        print("(paper_flow.txt not written: %s)" % e)
     thin = [i for i, p in enumerate(pages, 1) if len(p.strip()) < 200]
     if thin:
         print("WARN pages with almost no text layer (scanned/figure-only?): %s" % thin[:20])
@@ -539,7 +718,7 @@ def paper(pdf, outdir):
             if c:
                 print("  p.%d | %s %s | %s | raster=%d" % (i, c.group(1), c.group(2), t[:110], imgs.get(i, 0)))
 
-def render(deck, dpi=50):
+def render(deck, dpi=100):
     """deck.pptx -> deck.pdf + preview/slide-N.png + render.json. Never raises: every failure is recorded honestly."""
     import glob, shutil, subprocess, tempfile
     out, stem = os.path.dirname(os.path.abspath(deck)), os.path.splitext(os.path.abspath(deck))[0]
@@ -604,4 +783,4 @@ if __name__ == "__main__":
         a = [v for v in sys.argv[2:] if not v.startswith("--")]
         figcrop(*a[:4], **dict({"dpi": int(a[4])} if len(a) > 4 else {}, keep_caption="--keep-caption" in sys.argv))
     else:
-        inspect(sys.argv[2], "--full" in sys.argv) if sys.argv[1] == "inspect" else build(sys.argv[2])
+        inspect(sys.argv[2], "--full" in sys.argv) if sys.argv[1] == "inspect" else build(sys.argv[2], sys.argv[3:])
