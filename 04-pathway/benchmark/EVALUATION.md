@@ -66,7 +66,7 @@
 - 本机有 rsvg-convert：PNG 2126 px（180 mm @ 300 dpi）+ 矢量 PDF（15 个字体嵌入）；pixcheck 9 个节点无提示；assemble → `PASS: 9 contract field(s), status=partial, 0 fail / 0 warn`，build 剩下的“图例超出画布”自动进 knownProblems。
 - 本机 PATH 中无任何渲染器、无 matplotlib：render 出标准库矢量 PDF，pixcheck 跳过，assemble PASS，exceptions 记缺 PNG 与跳过的像素检查。
 - gpu 服务器（matplotlib，无 rsvg/cairosvg/magick）：render 用内置 matplotlib 出 PNG+PDF，pixcheck 在 1200 px 重渲染上检查 9 个节点无提示，assemble PASS。
-- 内置渲染与 rsvg 渲染目视对照：区室、膜带、节点、斜体基因名、箭头/T 端/圆点端 marker、虚线 transport、图例都在原位。
+- 内置渲染与 rsvg 渲染目视对照：区室、膜带、节点、斜体基因名、箭头/T 端/圆点端、虚线 transport、图例都在原位。
 
 
 ## 7. 1.3 调整：模型不再算坐标（2026-11）
@@ -91,3 +91,17 @@ build 只报 1 条 WARN，pixcheck PASS——即检查全过而图有可见缺�
 另用旧 cGAS–STING 案例（含 ER、Golgi 子区室）去掉全部坐标重建：0 WARN、6.0 pt、8 处交叉，ER 膜画成胞质内的脂双层小带、Golgi 为子框；无渲染器时标准库 PDF 与 matplotlib 回退渲染均正确画出新图元。
 
 **仍有的局限**：布局是启发式，复杂图仍有交叉与绕线；resolved spec 固定了节点宽度，修改版长标签会换行；排版提示（`col`/`rank`/`feedback`）需要模型看了 WARN 后自己加。
+
+## 8. 1.4 调整：端点图形与版面（2026-11）
+同一份合成材料（胰岛素/氨基酸 → 溶酶体 mTORC1 → FOXO1/TFEB，24 实体、26 关系、5 区室，174 mm、最小 6 pt；示例，非正式案例）用同一份 spec 分别跑 1.3 与 1.4，环境只有 ImageMagick + LibreOffice（没有 rsvg/inkscape）：
+
+| 项目 | 1.3 | 1.4 |
+|---|---|---|
+| PNG 里的箭头/T 端/圆点端 | 全部缺失（ImageMagick 不画 SVG marker），激活与抑制只剩颜色区别 | 全部画出（端点是 polygon/line/circle） |
+| 最小字号（174 mm） | 4.4 pt，低于工单 6 pt | 7.3 pt |
+| 细胞器（溶酶体）位置 | 排在上游 AKT 之前，AKT ⊣ TSC 绕一大圈 | 按因果顺序排在 AKT 之后，主链自上而下 |
+| 汇入同一节点的多条线 | 挤在同一点 | 沿节点上/下边分开落点 |
+| build 版面 WARN | 4 条 | 2 条 |
+| 长标题 | 把画布撑宽，右侧留白 | 自动换行 |
+
+限制：行数多的通路（> 10 行）在窄栏宽下图会偏高（上例 174 × 285 mm），需要时把次要分支合并或把宽度设为双栏。

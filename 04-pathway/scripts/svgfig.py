@@ -30,7 +30,7 @@ REF = {"tri": 9, "open": 9, "bar": 6, "dot": 10}
 CS = ["#2166AC", "#92C5DE", "#F7F7F7", "#F4A582", "#D6604D", "#B2182B", "#67001F"]
 KSHAPE = {"protein": "round", "complex": "octagon", "family": "stack", "gene": "gene", "mrna": "mrna", "small_molecule": "ellipse",
           "ion": "circle", "cell": "ellipse"}
-KLAB = {"gene": "gene (italic; bent arrow = promoter)", "mrna": "mRNA (italic)", "protein": "protein", "complex": "protein complex",
+KLAB = {"gene": "gene (italic, promoter arrow)", "mrna": "mRNA (italic)", "protein": "protein", "complex": "protein complex",
         "family": "protein family", "small_molecule": "small molecule", "ion": "ion", "cell": "cell", "process": "process"}
 MODS = {"P": "phosphorylated", "UB": "ubiquitinated", "AC": "acetylated", "ME": "methylated"}
 FONT = "Arial, Helvetica, 'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', sans-serif"
@@ -66,6 +66,27 @@ def txt(i, x, y, lines, fs, o, src="", anchor="middle", color="#111111"):
     sp = "".join('<tspan x="%.1f" dy="%s">%s</tspan>' % (x, "0" if k == 0 else "1.2em", escape(l)) for k, l in enumerate(lines))
     return '<text id="%s" x="%.1f" y="%.1f" font-size="%.1f" text-anchor="%s" fill="%s"%s data-src="%s">%s</text>' % (
         i, x, y, fs, anchor, o.get("color", color), st, q(src), sp)
+
+def head(i, kind, col, a, b, S, sw=2.0):
+    """Explicit end glyph at b for the last segment a->b (plain geometry, no <marker>, so every renderer draws it).
+    Returns (svg, new line end)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    d = (dx * dx + dy * dy) ** 0.5 or 1.0
+    ux, uy = dx / d, dy / d
+    nx, ny, ln, hw = -uy, ux, min(11.0 * S, max(d - 2, 4.0)), 5.0 * S
+    b = (b[0] - ux * 1.5, b[1] - uy * 1.5)
+    c = (b[0] - ux * ln, b[1] - uy * ln)
+    if kind in ("tri", "open"):
+        g = '<polygon id="%s" points="%.1f,%.1f %.1f,%.1f %.1f,%.1f" fill="%s" stroke="%s" stroke-width="%.1f" stroke-linejoin="round"/>' % (
+            i, b[0], b[1], c[0] + nx * hw, c[1] + ny * hw, c[0] - nx * hw, c[1] - ny * hw, col if kind == "tri" else "#FFFFFF", col, 1.0 if kind == "tri" else sw * 0.8)
+        return g, c
+    if kind == "bar":
+        return '<line id="%s" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="%.1f" stroke-linecap="butt"/>' % (
+            i, b[0] + nx * hw * 1.3, b[1] + ny * hw * 1.3, b[0] - nx * hw * 1.3, b[1] - ny * hw * 1.3, col, max(3.0, 2.8 * S)), b
+    if kind == "dot":
+        r = 4.2 * S
+        return '<circle id="%s" cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>' % (i, b[0] - ux * r, b[1] - uy * r, r, col), (b[0] - ux * r, b[1] - uy * r)
+    return "", b
 
 def clip(n, px, py):
     dx, dy, hw, hh, sh = px - n["cx"], py - n["cy"], n["w"] / 2.0, n["h"] / 2.0, n.get("shape", "rect")
@@ -192,6 +213,11 @@ def layout(sp, F, where="right"):
             v = min([v for v in dag[u] if top_of(v) == top_of(u)], key=lambda v: rank[v])
             side = all(e["type"] == "bind" for e in E if e["from"] == u) and top_of(u) == top_of(v) and len(pred[v]) > 1
             rank[u] = rank[v] if side else max(0, rank[v] - 1)
+    for u in reversed(order):  # organelle member fed only from outside its compartment: as late as its targets in the organelle allow
+        if (PI.get(N[u].get("comp")) or {}).get("in") in PI and not [w for w in pred[u] if top_of(w) == top_of(u) and (w, u) not in back]:
+            nx = [rank[v] for v in dag[u] if N[v].get("comp") == N[u].get("comp")]
+            if nx:
+                rank[u] = max(rank[u], min(nx) - 1)
     for n in nodes:
         rank[n["id"]] = n.get("rank", rank[n["id"]])
     tops = [p for p in panels if not p.get("in") or p["in"] not in PI]
@@ -207,7 +233,7 @@ def layout(sp, F, where="right"):
         sh = n.setdefault("shape", KSHAPE.get(n.get("kind", ""), "rect"))
         if "w0" in n or "w" not in n:
             w = max(tw(l, fs, n.get("bold")) for l in str(n.get("label", "")).split("\n")) + 26 * F
-            n["w"] = round(min(max(w * (1.3 if sh in ("ellipse", "circle") else 1), 84 * F), 210 * F), 1)
+            n["w"] = round(min(max(w * (1.3 if sh in ("ellipse", "circle") else 1), 78 * F), 128 * F), 1)
         if "h0" in n or "h" not in n:
             n["h"] = round(max(len(wrap(n.get("label", ""), n["w"] - 12, fs)) * fs * 1.25 + 16 * F, 40 * F), 1)
             if PI.get(n.get("comp")) and thin(PI[n["comp"]]):
@@ -237,7 +263,7 @@ def layout(sp, F, where="right"):
         nb[e["to"]].append(e["from"])
     for r in rows:
         for k, i in enumerate(r["ids"]):
-            slot[i] = N[i].get("col", k)
+            slot[i] = int(N[i].get("col", k))
     rowof = {i: k for k, r in enumerate(rows) for i in r["ids"]}
     for it in range(12):
         for r in (rows if it % 2 == 0 else rows[::-1]):
@@ -268,11 +294,16 @@ def layout(sp, F, where="right"):
     for i in slot:
         slot[i] -= m0
     ncol = max(slot.values()) + 1 if slot else 1
-    dx = max([n["w"] for n in nodes] + [84 * F]) + 44
+    gap = 30 + 14 * F
+    colw = [max([N[i]["w"] for i in slot if slot[i] == c] + [40 * F]) for c in range(ncol)]
     titled = [p for p in panels if p.get("title")]
     reserve = max([tw(p["title"], 12.5 * F, True) + 26 for p in titled if thin(p) and not p.get("in")] + [24])
     X0, PX = 20 + reserve, 20
-    y = (40 + 22 * F if cv.get("title") else 16)
+    xl = [X0]
+    for c in range(ncol):
+        xl.append(xl[-1] + colw[c] + gap)
+    cv["title_w"] = round(max(xl[-1] + 18 - PX, 300 * F), 1)
+    y = y0_top(cv, F)
     gut, info = {}, {}
     for k, r in enumerate(rows):
         p = PI.get(r["top"], {"id": "_free"})
@@ -288,24 +319,24 @@ def layout(sp, F, where="right"):
             cy = y + bh / 2.0
             p["_band"] = bh
             y += bh
-            gut[k] = (cy - mh / 2.0 - 8, cy + mh / 2.0 + 8)
+            gut[k] = (cy - mh / 2.0 - 4 - 8 * F, cy + mh / 2.0 + 4 + 8 * F)
         else:
             if r["sub"] and r.get("first"):
                 y += 10 if r["thin"] else 14 + 16 * F
                 PI[r["sub"]]["_y"] = y - (0 if r["thin"] else 6 + 16 * F)
-            pad = 28
+            pad = 9 + 10 * F
             cy = y + pad + mh / 2.0
-            gut[k] = (cy - mh / 2.0 - 12, cy + mh / 2.0 + 12)
+            gut[k] = (cy - mh / 2.0 - 5 - 9 * F, cy + mh / 2.0 + 5 + 9 * F)
             y = cy + mh / 2.0 + pad
             if r["sub"] and r.get("last"):
                 PI[r["sub"]]["_y2"] = y - pad + (10 if r["thin"] else 14)
                 y += 6
         for i in r["ids"]:
-            N[i]["cx"], N[i]["cy"] = round(X0 + slot[i] * dx + dx / 2.0, 1), round(cy, 1)
+            N[i]["cx"], N[i]["cy"] = round((xl[slot[i]] + xl[slot[i] + 1]) / 2.0, 1), round(cy, 1)
             info[i] = (k, slot[i])
         if k == len(rows) - 1 or rows[k + 1]["top"] != r["top"]:
             p["_y2"] = y + (0 if r["thin"] and not r["sub"] else 4)
-    gx = lambda g: X0 + g * dx  # noqa: E731  lane g = left boundary of column g
+    gx = lambda g: xl[max(0, min(ncol, g))]  # noqa: E731  lane g = left boundary of column g
     used = {}
     def off(key, step):
         n = used.get(key, 0)
@@ -322,7 +353,7 @@ def layout(sp, F, where="right"):
         pair = frozenset((a["id"], b["id"]))
         dup = pair in seen
         seen.add(pair)
-        e.pop("via", None), e.pop("elbow", None)
+        e.pop("via", None), e.pop("elbow", None), e.pop("ports", None)
         near = r2 == r1 + 1 or (r2 > r1 and c1 == c2) or (r1 == r2 and abs(c1 - c2) == 1) or (r2 == r1 - 1 and c1 == c2)
         if not dup and near and not blocked(a, b):
             continue
@@ -349,9 +380,40 @@ def layout(sp, F, where="right"):
             y1, y2 = gut[r1][0] + off(("g", r1, 0), 5), gut[r2][1] + off(("g", r2, 1), 5)
             e["via"] = [[a["cx"], y1], [lx, y1], [lx, y2], [b["cx"], y2]]
         e["via"] = [[round(u, 1), round(v, 1)] for u, v in e["via"]]
+    pk = {}  # ports: edges that meet the top/bottom of a node are spread along that side instead of sharing its centre
+    for e in E:
+        a, b, v = N[e["from"]], N[e["to"]], e.get("via") or []
+        for n, o, k in ((a, b, 0), (b, a, 1)):
+            qq = (v[0] if k == 0 else v[-1]) if v else (o["cx"], o["cy"])
+            sd = "b" if qq[1] > n["cy"] + n["h"] / 4.0 else "t" if qq[1] < n["cy"] - n["h"] / 4.0 else None
+            if sd and (not v or abs(qq[0] - n["cx"]) < 0.5):
+                key = qq[0] if not v else (v[1] if k == 0 else v[-2])[0] if len(v) > 1 else qq[0]
+                pk.setdefault((n["id"], sd), []).append((key, e["id"], e, k))
+    for (nid, sd), lst in pk.items():
+        n, m = N[nid], len(lst)
+        lst.sort(key=lambda t: (t[0], t[1]))
+        step = min(18 * F, n["w"] * 0.66 / m)
+        for j, (_, _, e, k) in enumerate(lst):
+            o, hh = (j - (m - 1) / 2.0) * step, n["h"] / 2.0
+            if n.get("shape") in ("ellipse", "circle"):
+                hh *= max(0.2, 1 - (o / (n["w"] / 2.0)) ** 2) ** 0.5
+            pt = [round(n["cx"] + o, 1), round(n["cy"] + (hh if sd == "b" else -hh), 1)]
+            e.setdefault("ports", [None, None])[k] = pt
+            if e.get("via"):  # first / last leg stays vertical
+                (e["via"][0] if k == 0 else e["via"][-1])[0] = pt[0]
+    for e in E:  # straight link inside one column stays vertical: both ends take the port of the busier node
+        pr, a, b = e.get("ports"), N[e["from"]], N[e["to"]]
+        if pr and pr[0] and pr[1] and not e.get("via") and abs(a["cx"] - b["cx"]) < 1:
+            k = 0 if len(pk.get((a["id"], "b" if b["cy"] > a["cy"] else "t"), [])) >= len(pk.get((b["id"], "t" if b["cy"] > a["cy"] else "b"), [])) else 1
+            pr[1 - k][0] = pr[k][0]
+    for e in E:  # parallel second relation: its two offset points are the ends themselves
+        v = e.get("via")
+        if v and len(v) == 2 and not e.get("ports") and (abs(v[0][0] - v[1][0]) < 0.5 and abs(v[0][0] - N[e["from"]]["cx"]) > 0.5 or abs(v[0][1] - v[1][1]) < 0.5 and abs(v[0][1] - N[e["from"]]["cy"]) < N[e["from"]]["h"] / 2.0):
+            e["ports"] = [v[0], v[1]]
+            del e["via"]
     right = gx(ncol) + 18 + 9 * side.get(ncol, 0)
     if where != "right":  # legend below: panels span the full width under the title
-        right = max(right, tw(cv.get("title", ""), 20 * F, True) + 34)
+        right = max(right, PX + 300 * F)
     for p in panels:
         if p.get("in") in PI and p.get("_y") is not None:
             m = [N[i] for i in N if N[i].get("comp") == p["id"]]
@@ -381,11 +443,11 @@ def layout(sp, F, where="right"):
         lg.update(x=round(right + 22, 1), y=round(y0_top(cv, F), 1))
         cv["w"], cv["h"] = round(right + 22 + colw), round(max(bottom + 10, lg["y"] + nrow * 20 * F + 20))
     else:
-        ncl = max(1, int((max(right - PX, tw(cv.get("title", ""), 20 * F, True) + 20)) // colw))
+        ncl = max(1, int((right - PX) // colw))
         per = -(-nrow // ncl)
         lg.update(x=PX + 4, y=round(bottom + 12, 1), cols=ncl, colw=round(colw, 1), maxh=round(per * 20 * F + 30, 1))
         cv["w"], cv["h"] = round(max(right + 6, PX + ncl * colw)), round(bottom + 12 + 22 * F + per * 20 * F + 30)
-    cv["w"] = max(cv["w"], int(tw(cv.get("title", ""), 20 * F, True) + 40))
+    cv["w"] = max(cv["w"], int(cv["title_w"] + 2 * PX))
     cv["autosize"] = True
     return cv["w"]
 
@@ -400,7 +462,9 @@ def pav(v):
     return [m for m, c in bl for _ in range(c)]
 
 def y0_top(cv, F):
-    return 40 + 22 * F if cv.get("title") else 16
+    if not cv.get("title"):
+        return 16
+    return 14 + 24 * F * len(wrap(cv["title"], cv["title_w"] * 0.88, 20 * F, True)) + 10 if cv.get("title_w") else 40 + 22 * F
 
 def build(a):
     sp, out = json.load(open(a[0], encoding="utf-8")), a[1]
@@ -409,18 +473,25 @@ def build(a):
     auto = cv.get("layout") == "auto" or (not cv.get("grid") and bool(sp.get("nodes")) and any("cx" not in n and "col" not in n for n in sp["nodes"]))
     if auto:
         F0, mm, mp = float(cv.get("fs_scale", 1)), cv.get("width_mm"), cv.get("min_font_pt")
-        tries = [(F0 + 0.1 * k, wh) for k in range(13) for wh in ((cv.get("legend_at"),) if cv.get("legend_at") else ("right", "bottom"))]
-        for F, wh in tries:  # smallest font scale (legend right first, then below) that keeps every text >= min_font_pt at width_mm
+        tries = [(F0 + 0.15 * k, wh) for k in range(18) for wh in ((cv.get("legend_at"),) if cv.get("legend_at") else ("right", "bottom"))]
+        best = None
+        for F, wh in tries:  # smallest font scale that keeps every text >= min_font_pt at width_mm without a page-breaking height
             s2 = copy.deepcopy(sp)
             Wl = layout(s2, F, wh)
-            if not (mm and mp) or 12.0 * F * float(mm) * 3.78 / Wl * 0.75 >= float(mp) * 1.04:
+            pt = 12.0 * F * float(mm or 180) * 3.78 / Wl * 0.75
+            ok = not (mm and mp) or pt >= float(mp) * 1.04
+            if best is not None and best[0][0] is False and F > best[0][1]:
                 break
+            key = (not ok, F if ok else -pt, s2["canvas"]["h"] / float(Wl))  # same scale: the less elongated legend placement wins
+            if best is None or key < best[0]:
+                best = (key, s2)
+        s2 = best[1]
         sp, cv = s2, s2["canvas"]
         res = copy.deepcopy(sp)
         res["canvas"]["layout"] = "fixed"
         rpath = os.path.splitext(out)[0] + "_resolved_spec.json"
         json.dump(res, open(rpath, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    S = float(cv.get("fs_scale", 1))
+    S, PXL = float(cv.get("fs_scale", 1)), 20
     W, H, g = cv.get("w", 1200), cv.get("h", 800), cv.get("grid", {})
     L = {k: [] for k in ("panels", "edges", "nodes", "data", "text", "legend")}
     cm = {"entities": [], "relations": [], "compartments": [], "legend": [], "data_encoding": None, "warnings": warn}
@@ -490,7 +561,8 @@ def build(a):
         nodata = nodata or nod
         x, y, w, h = n["cx"] - n["w"] / 2.0, n["cy"] - n["h"] / 2.0, n["w"], n["h"]
         fill = n.get("fill", "#FFFFFF")
-        base = 'id="%s" fill="%s" stroke="%s" stroke-width="1.5" data-src="%s"' % (n["id"], fill, n.get("stroke", "#333333"), q(s))
+        base = 'id="%s" fill="%s" stroke="%s" stroke-width="%s"%s data-src="%s"' % (n["id"], fill, n.get("stroke", "#333333"), n.get("stroke_width", 1.5),
+                                                                                  ' stroke-dasharray="%s"' % q("6,4" if n["dash"] is True else n["dash"]) if n.get("dash") else "", q(s))
         L["nodes"] += shape(sh, x, y, w, h, base, n["cx"], n["cy"])
         fs, pad = float(n.get("fs", 14 * S)), (0.72 if sh in ("ellipse", "circle", "diamond") else 1.0)
         lines = wrap(n.get("label", ""), w * pad - 12, fs, n.get("bold"))
@@ -511,7 +583,7 @@ def build(a):
     lg, used, segs, seen, LQ = sp.get("legend"), [], [], {}, []
     for e in sp.get("edges", []):
         t, ev = e.get("type", "step"), e.get("evidence", "direct")
-        dash, head, col = EDGE.get(t, EDGE["step"])
+        dash, hk, col = EDGE.get(t, EDGE["step"])
         dash, col, s = EVID.get(ev, dash), e.get("color", col), src(e, "edge")
         used += [("edge", t)] + ([("evidence", ev)] if ev in EVID else [])
         ends = [N.get(e[k]) if isinstance(e[k], str) else None for k in ("from", "to")]
@@ -522,21 +594,31 @@ def build(a):
             warn.append("edge %s: transport joins different entities (%s -> %s); transport = the SAME entity moving between compartments. "
                         "Draw a copy in the target compartment, then activate (e.g. transcription) to the gene" % (e["id"], ends[0].get("label"), ends[1].get("label")))
         pair = frozenset((e["from"], e["to"])) if isinstance(e["from"], str) and isinstance(e["to"], str) else None
-        if pair and pair in seen and not (e.get("via") or e.get("elbow")):
+        if pair and pair in seen and not (e.get("via") or e.get("elbow") or e.get("ports")):
             warn.append("edges %s and %s draw over each other (same node pair): give one a via route or merge them" % (seen[pair], e["id"]))
         seen[pair] = e["id"]
         pts = [(n["cx"], n["cy"]) if n else tuple(e[k]) for n, k in zip(ends, ("from", "to"))]
         pts[1:1] = [tuple(v) for v in e.get("via", [])] or ([(pts[1][0], pts[0][1]) if e["elbow"] == "hv" else (pts[0][0], pts[1][1])] if e.get("elbow") else [])
         warn += ["edge %s: via point %s lies inside node %s (move it outside)" % (e.get("id"), v, k) for v in e.get("via", []) for k, n in N.items() if abs(v[0] - n["cx"]) < n["w"] / 2.0 and abs(v[1] - n["cy"]) < n["h"] / 2.0]
-        pts[0] = clip(ends[0], *pts[1]) if ends[0] else pts[0]
-        pts[-1] = clip(ends[1], *pts[-2]) if ends[1] else pts[-1]
+        pr = e.get("ports") or [None, None]
+        pts[0] = tuple(pr[0]) if pr[0] else clip(ends[0], *pts[1]) if ends[0] else pts[0]
+        pts[-1] = tuple(pr[1]) if pr[1] else clip(ends[1], *pts[-2]) if ends[1] else pts[-1]
         for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
             segs.append((e["id"], x1, y1, x2, y2))
             warn += ["edge %s passes through node %s: add via points or move nodes" % (e.get("id"), k) for k, n in N.items() if all(n is not x for x in ends) and any(
                 abs(x1 + (x2 - x1) * f / 20.0 - n["cx"]) < n["w"] / 2.0 - 3 and abs(y1 + (y2 - y1) * f / 20.0 - n["cy"]) < n["h"] / 2.0 - 3 for f in range(1, 20))]
-        m = (' marker-end="url(#%s)"' % mk(head, col) if head != "none" else "") + (' marker-start="url(#%s)"' % mk(head, col) if e.get("both") and head != "none" else "")
+        sw = e.get("width", round(2 * min(S, 1.5), 1))
+        hd = []
+        if hk != "none" and len(pts) > 1:
+            g1, pts[-1] = head(e["id"] + "-head", hk, col, pts[-2], pts[-1], S, sw)
+            hd.append(g1)
+            if e.get("both"):
+                g2, pts[0] = head(e["id"] + "-head2", hk, col, pts[1], pts[0], S, sw)
+                hd.append(g2)
+        m = ""
         L["edges"].append('<polyline id="%s" points="%s" fill="none" stroke="%s" stroke-width="%s"%s%s data-src="%s"/>' % (
-            e["id"], " ".join("%.1f,%.1f" % p for p in pts), col, e.get("width", round(2 * min(S, 1.5), 1)), ' stroke-dasharray="%s"' % dash if dash else "", m, q(s)))
+            e["id"], " ".join("%.1f,%.1f" % p for p in pts), col, sw, ' stroke-dasharray="%s"' % dash if dash else "", m, q(s)))
+        L["edges"] += hd
         lab = lambda i: (ends[i] or {}).get("label", str(e[("from", "to")[i]]))  # noqa: E731
         cm["relations"].append({"id": e["id"], "from": lab(0), "to": lab(1), "type": t, "evidence": ev, "label": e.get("label", ""), "src": s})
         if e.get("label"):
@@ -544,19 +626,19 @@ def build(a):
     hits = lambda b: [k for k, n in N.items() if b[0] < n["cx"] + n["w"] / 2.0 and b[2] > n["cx"] - n["w"] / 2.0 and b[1] < n["cy"] + n["h"] / 2.0 and b[3] > n["cy"] - n["h"] / 2.0]  # noqa: E731
     def crossed(b, eid):
         return sorted({sg[0] for sg in segs if sg[0] != eid and any(inside(sg[1] + (sg[3] - sg[1]) * f / 30.0, sg[2] + (sg[4] - sg[2]) * f / 30.0, b) for f in range(31))})
-    placed = []
+    placed = [(p["x"] + 6, p["y"] + 4, p["x"] + 14 + tw(p.get("title", ""), 15 * S, True), p["y"] + 30 * S) for p in sp.get("panels", []) if p.get("title") and not thin(p)]
     for e, pts, col, s in LQ:  # labels after all lines: choose the segment where the label hides nothing
         lfs, lw = 12 * S, tw(e["label"], 12 * S)
         best = None
         for k in sorted(range(1, len(pts)), key=lambda k: (abs(k - len(pts) // 2), -abs(pts[k][0] - pts[k - 1][0]) - abs(pts[k][1] - pts[k - 1][1]))):
-            mx, my = (pts[k - 1][0] + pts[k][0]) / 2.0, (pts[k - 1][1] + pts[k][1]) / 2.0
-            vert = abs(pts[k][1] - pts[k - 1][1]) > abs(pts[k][0] - pts[k - 1][0])
-            for sd in (1, -1):
+          vert = abs(pts[k][1] - pts[k - 1][1]) > 0.6 * abs(pts[k][0] - pts[k - 1][0])
+          for tq, sd in ((0.5, 1), (0.5, -1), (0.32, 1), (0.32, -1), (0.68, 1), (0.68, -1)):
+                mx, my = pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * tq, pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * tq
                 lx, ly, anc = (mx + sd * 6 * S, my + 4 * S, "start" if sd > 0 else "end") if vert else (mx, my - 6 * S if sd > 0 else my + 16 * S, "middle")
                 bx = lx - 2 - (0 if vert and sd > 0 else lw if vert else lw / 2)
                 box = (bx, ly - 13 * S, bx + lw + 4, ly + 3 * S)
                 bad = (len(hits(box)) * 3 + len(crossed(box, e["id"])) + 9 * (box[0] < 2 or box[2] > W - 2) + 3 * sum(1 for pb in placed if box[0] < pb[2] and box[2] > pb[0] and box[1] < pb[3] and box[3] > pb[1]),
-                       abs(k - len(pts) // 2), sd < 0)
+                       abs(k - len(pts) // 2), tq != 0.5, sd < 0)
                 if best is None or bad < best[0]:
                     best = (bad, lx, ly, anc, box)
         bad, lx, ly, anc, box = best
@@ -607,10 +689,12 @@ def build(a):
                 continue
             gh = 14 * S
             if it.get("edge") or it.get("evidence"):
-                dash, head, col = EDGE[it["edge"]] if it.get("edge") else (EVID[it["evidence"]], "none", "#555555")
+                dash, hk, col = EDGE[it["edge"]] if it.get("edge") else (EVID[it["evidence"]], "none", "#555555")
                 col = it.get("color", col)
-                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="2"%s%s/>' % (i, lg["x"], y + 6 * S, lg["x"] + 34 * S, y + 6 * S, col,
-                                   ' stroke-dasharray="%s"' % dash if dash else "", ' marker-end="url(#%s)"' % mk(head, col) if head != "none" else ""))
+                g1, en = head(i + "-glyphhead", hk, col, (lg["x"], y + 6 * S), (lg["x"] + 36 * S, y + 6 * S), S * 0.8)
+                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%.1f" y2="%s" stroke="%s" stroke-width="%.1f"%s/>' % (i, lg["x"], y + 6 * S, en[0], y + 6 * S, col, round(2 * min(S, 1.5), 1),
+                                   ' stroke-dasharray="%s"' % dash if dash else ""))
+                L["legend"] += [g1] if g1 else []
             elif it.get("kind"):
                 gh = 18 * S if it["kind"] == "gene" else 14 * S
                 yy = y + (6 * S if it["kind"] == "gene" else 0)
@@ -638,7 +722,9 @@ def build(a):
     elif sp.get("edges"):
         warn.append("no legend: add legend{x,y} (items are auto-filled from the edge types, evidence styles and colour scale used)")
     if cv.get("title"):
-        L["text"].append(txt("figure-title", W / 2.0, 34 * S, [cv["title"]], cv.get("title_fs", 20 * S), {"bold": 1}, cv.get("src", ""), "middle"))
+        tfs = cv.get("title_fs", 20 * S)
+        tl = wrap(cv["title"], cv["title_w"] * 0.88, tfs, True) if cv.get("title_w") else [cv["title"]]
+        L["text"].append(txt("figure-title", (PXL + cv["title_w"] / 2.0) if cv.get("title_w") else W / 2.0, (10 + 22 * S) if cv.get("title_w") else 34 * S, tl, tfs, {"bold": 1}, cv.get("src", ""), "middle"))
     wa, ha = ("%smm" % cv["width_mm"], "%.2fmm" % (cv["width_mm"] * H / float(W))) if cv.get("width_mm") else (W, H)  # physical size for journals
     fonts = {"min_px": round(min(FSUSED or [0]), 2)}
     if cv.get("width_mm"):

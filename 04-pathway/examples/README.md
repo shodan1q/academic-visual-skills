@@ -11,7 +11,7 @@ case（示例）：
 ```
 工单（示例，节选）：
 ```json
-{"figure_id": "figure03", "panel": "3E",
+{"figure_type": "biological_mechanism_pathway",
  "required_compartments": ["extracellular", "plasma membrane", "cytosol", "ER membrane", "Golgi", "nucleus"],
  "must_show": ["binding vs activation vs inhibition vs phosphorylation vs translocation vs ubiquitination distinguishable",
                "negative feedback loop", "parallel NF-kB branch", "evidence strength for indirect links"],

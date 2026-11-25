@@ -58,4 +58,4 @@ python3 $S/scripts/export_check.py assemble /app/work/notes.json     # 填满 re
 - 纯文本模型读不到 PDF 里的原图像素，只能依据图注、正文与数据表，并如实说明。
 
 ## 维护
-版本 lite-1.3（2026-11）：自动布局、生物学图元（脂双层、核膜、基因启动子、复合物、修饰角标）、最小字号自动满足、标签压线检查、resolved spec 修改流程。lite-1.2：skeleton/assemble（任意 contract 字段名、可选输入容错）、build WARN 最多改两轮、pixcheck 改为提示、渲染器可选（内置回退）。改脚本后用 examples/README.md 的示例重跑 build → render → pixcheck → assemble。
+版本 lite-1.4（2026-11）：箭头端点改为普通图形（不依赖 SVG marker，ImageMagick/LibreOffice/内置渲染都能画出）、细胞器整体按因果顺序落位、节点多条连线分开落点、列宽按内容、长标题与长标签自动换行。lite-1.3：自动布局、生物学图元（脂双层、核膜、基因启动子、复合物、修饰角标）、最小字号自动满足、标签压线检查、resolved spec 修改流程。lite-1.2：skeleton/assemble（任意 contract 字段名、可选输入容错）、build WARN 最多改两轮、pixcheck 改为提示、渲染器可选（内置回退）。改脚本后用 examples/README.md 的示例重跑 build → render → pixcheck → assemble。

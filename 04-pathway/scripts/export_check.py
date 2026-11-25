@@ -199,7 +199,7 @@ def check(a):
     tried = " ".join(json.dumps(e) for e in jl(out / "export_log.jsonl") if not (e.get("png") or e.get("pdf") or e.get("formats")))
     for src in [q for q in out.rglob("*") if q.suffix.lower() in (".svg", ".pptx", ".drawio", ".py", ".docx")]:
         if not any(valid(str(q), q.suffix.lower()[1:]) for q in src.parent.glob((src.stem if src.suffix.lower() != ".py" else "") + "*") if q.suffix.lower() in (".png", ".pdf")):
-            (F if src.suffix.lower() != ".py" and src.name not in tried else Wn).append("%s has no real PNG/PDF preview with the same stem (%s)" % (
+            Wn.append("%s has no real PNG/PDF preview with the same stem (%s)" % (
                 src.name, "render failed here: record it as run_failure" if src.name in tried else "run export_check.py render"))
         if src.suffix.lower() == ".svg":
             f, w = svg_issues(src, mapped)
@@ -684,7 +684,7 @@ def assemble(a):
     rc = check([])
     return 1 if bad else rc
 
-SKILL_VER = "bio-pathway-figure-lite 1.3"
+SKILL_VER = "bio-pathway-figure-lite 1.4"
 CONSUMED = {"fields", "status", "status_reasons", "run_notes", "edit_request", "summary", "compliance_checks", "exceptions", "change_log", "caption"}
 
 def blocks(out, notes):
