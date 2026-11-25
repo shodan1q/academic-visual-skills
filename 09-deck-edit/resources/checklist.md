@@ -1,6 +1,6 @@
 # 交付前逐项核对（学术 PPT 生成与编辑）
 
-每项写进 compliance_checks：`{"check": ..., "result": "PASS|FAIL|WARN|未核对", "basis": "实测依据"}`。
+`deck_flow.py finish` 会自动核对并写入其中大部分（`by: check_result.py` 的行）；下面是人工复核时的完整清单。每项写进 compliance_checks：`{"check": ..., "result": "PASS|FAIL|WARN|未核对", "basis": "实测依据"}`。
 
 ## A. 工作单
 - [ ] mode、总页数、编辑指令（E1…En 原文）、source preservation、template inheritance 全部抄进 plan.md

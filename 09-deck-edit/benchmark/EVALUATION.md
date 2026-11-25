@@ -72,3 +72,26 @@
 改后版本三处都消失（E5 范围内的按指令更正，s8 在 E7 重写时用论文值）。另报出 s3/s8 主题式标题与 s7/s10 缺备注。
 未解决：LibreOffice 在中英混排处加的字间距偏大（替代字体所致，PowerPoint 打开正常与否未验证）；封面 "2026" 不在论文里，按保留页只报 WARN。
 共用脚本改动（与 06/07/08 同源，接口向后兼容）：figcrop 去白边/题注、`_{}`/`^{}` 下标上标、render 100 dpi、checker 写回判定行、`--edit-map`。
+
+## 版本 1.4：把流程压成三条命令（内部记录，未做基础 Agent 对照）
+动机：运行条件是 64 次请求、900 s。1.3 的流程在维护者手里约 20 次调用，其中读输入 5–6 次、构建后出 diff 2 次、渲染/复制/组装/自检 5–6 次，
+都是固定动作；任何一步漏掉（没复制成稿、没跑 assemble、checker 没最后跑），交付目录里就只剩骨架 result.json。SKILL.md 第 9 步是一整段长文。
+
+改动：新增 `scripts/deck_flow.py`（start / build / finish，只调用原有两个脚本）；SKILL.md 改写为 6 步快速路径 + spec 模板 + facts 模板。
+
+同一合成案例 SIM09（`benchmark/sim09_case.json`），同一份 plan/spec/facts，Linux x86_64 + LibreOffice 24.2.7 + poppler 24.02 上运行：
+
+| 项目 | 1.3 | 1.4 |
+|---|---|---|
+| 工具调用次数（维护者按 SKILL.md 操作） | 约 20 | 6（start、figcrop、写 plan+spec、build、写 facts、finish） |
+| 第一份可交付 pptx 出现在输出目录 | 第 8 步（定稿）之后 | 第一次 build 结束时；之后每次 build 覆盖，构建失败不覆盖 |
+| 初始稿里埋的三处错误（96%、"Fig. 3" 错标、94% 取整） | 需要按第 4 步手工逐个 grep 对账 | start 的预检直接列出三处（另有封面 "2026" 一条非论文数字） |
+| 脚本单步耗时 | — | start 0.3 s，build < 1 s，finish 约 6 s（两次 LibreOffice 导出） |
+| 成稿与各项记录 | checker PASS，10 页，保留页 1/2/4/9 一致 | 相同（pptx 由同一 spec 生成）；另自动交付 time_record.json、versions/v0.txt、v0_before_preview/*.png、precheck.md |
+| 没写 change_log.md | 交付物里缺这一份 | finish 按 instructions_done 起草（含每条的回退方式和版本列表） |
+| checker 报 FAIL 而没有后续调用 | result.json 仍写 complete | finish 把 status 改为 partial，status_reasons 写 FAIL 原文 |
+
+退化情况（均实测）：`SOFFICE=none` → 交付 pptx 与全部文字记录，status=partial，run_failures 写明无渲染器；没有 facts.json → 仍组装出全部 contract 字段并提示；
+未 build 就 finish → 返回提示，骨架保留；spec 写错（keep 超出页数）→ 构建失败不覆盖已交付版本；没有初始稿也没有工作单（generate）→ 以 target-template 为模板，
+编造的小数（77.7%）在数字回查中 FAIL，status 自动降为 partial。
+未验证：平台实际运行环境中的 LibreOffice 版本与耗时；finish 给渲染留的时间按 900 s 总预算估算（`RUN_BUDGET_S` 可调）。

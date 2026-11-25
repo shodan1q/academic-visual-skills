@@ -12,26 +12,20 @@
 ```
 `starting-deck.pptx`（示例，5 页：封面、问题、方法 5 条、Table 1、结论）、`target-template.pptx`、`paper.pdf`（示例论文，Fig. 2 在第 2 页）。
 
-## 2. 调用序列（约 16 次调用）
+## 2. 调用序列（6 次调用；底层命令见各脚本文件头）
 ```bash
-export SKILL_DIR=/skills/weekly-skill WORK_DIR=/app/work OUT_DIR=/app/output; K=$SKILL_DIR/scripts/pptx_kit.py
-date -u +%FT%TZ > $WORK_DIR/t_start; cat /input/case.json; find /input -maxdepth 3 -type f; cat /input/artifacts/slide-workorder.json
-# 第 5 次调用内写 result.json 骨架
-python3 $K inspect /input/starting-deck.pptx --full > $WORK_DIR/v0.txt; cp /input/starting-deck.pptx $WORK_DIR/v0.pptx
-pdftotext -layout /input/paper.pdf $WORK_DIR/paper.txt
+export SKILL_DIR=/skills/weekly-skill WORK_DIR=/app/work OUT_DIR=/app/output
+F=$SKILL_DIR/scripts/deck_flow.py; K=$SKILL_DIR/scripts/pptx_kit.py
+python3 $F start                                    # 输入清单、工作单全文、模板版式、初始稿逐页内容、论文文字与题注、预检；写 result.json 骨架
 python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png
-python3 $K build $WORK_DIR/spec_v1.json
-python3 $K inspect $WORK_DIR/v1.pptx --full > $WORK_DIR/v1.txt; diff -u $WORK_DIR/v0.txt $WORK_DIR/v1.txt > $WORK_DIR/diff_v0_v1.txt
-cp $WORK_DIR/v1.pptx $OUT_DIR/presentation.pptx
-python3 $K render $OUT_DIR/presentation.pptx      # PDF + 100 dpi PNG + pdffonts + render.json；无 LibreOffice 时照实记录
-python3 $K render $WORK_DIR/v0.pptx && mkdir -p $OUT_DIR/versions && cp $WORK_DIR/v0.pdf $OUT_DIR/versions/v0_before.pdf   # 改前导出，供逐页对照
-python3 $SKILL_DIR/scripts/check_result.py --assemble      # 读 $WORK_DIR/facts.json + 磁盘文件，按含义填满 contract 每个键
-python3 $SKILL_DIR/scripts/check_result.py --template /input/starting-deck.pptx --slides 6 --paper $WORK_DIR/paper.txt --source $WORK_DIR/v0.txt \
-    --baseline $WORK_DIR/v0.pptx --keep-map 1:1,2:2,4:4 --edit-map 3:3,6:5   # 最后跑：判定行写回 result.json，version_diff.md 逐页改前/改后
+# 写 $WORK_DIR/plan.md 与 $WORK_DIR/spec_v1.json
+python3 $F build $WORK_DIR/spec_v1.json             # 构建 + diff_v0_v1.txt + 复制到 $OUT_DIR/presentation.pptx
+# 写 $WORK_DIR/facts.json（content_map、instructions_done、exceptions、uncertainty）与 change_log.md
+python3 $F finish --slides 6 --keep-map 1:1,2:2,4:4 --edit-map 3:3,6:5     # 渲染成稿与初始稿、记录、result.json、checker（最后跑）
 ```
 `spec_v1.json`（示例）：
 ```json
-{"template": "/input/starting-deck.pptx", "out": "/app/work/v1.pptx", "footer": "组会汇报", "slide_numbers": true,
+{"template": "/app/work/v0.pptx", "out": "/app/work/v1.pptx", "footer": "组会汇报", "slide_numbers": true,
  "slides": [{"keep": 1}, {"keep": 2},
   {"layout": "标题和内容", "title": "方法：共沉淀制备 4 个 Ce 负载量",
    "body": ["Ce 负载 0、0.5、1、2 wt%，400 °C 焙烧 4 h", "1% CO / 20% O2 / N2，GHSV 30,000 mL g-1 h-1", "每个条件重复 n = 3"], "notes": "E1 …"},
