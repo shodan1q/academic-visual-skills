@@ -35,7 +35,12 @@
 - [ ] 正文 ≥ 字号下限（checker `--min-pt`）；图片比例误差 ≤ 3%（slide_audit.md）
 - [ ] checker `--paper` 无 FAIL（有旧 deck 时加 `--source`，保留页用 `--preserved`）；slide_audit.md 已交付并在 result.json 里引用
 
+## 1.5 新增
+- [ ] 只改文字的指令用了 `keep` + `set`/`replace`（不是按版式重建）；build 的 edit scope 段没有 `SCOPE WARN`，或丢掉的形状确实是指令要求换掉的
+- [ ] `change_log.md` 每个改动页有指令编号（没有"none recorded"）、改前/改后、形状范围、回退写法；被删页、移动页与工作单一致
+- [ ] facts.json 的 content_map 里每个改动页写了 `instruction`；改动页有 `source_note`
+
 ## 1.3 新增
-- [ ] checker 最后跑（assemble 之后），带 `--baseline --keep-map --edit-map`；result.json 里有 `by: check_result.py` 的判定行和 `checker_record`
+- [ ] checker 最后跑（assemble 之后），带 `--baseline`（keep/edit 对应关系由 finish 从 spec 推出）；result.json 里有 `by: check_result.py` 的判定行和 `checker_record`
 - [ ] `version_diff.md` 每个改动页有改前/改后行，被删页名单与工作单一致；`versions/v0_before.pdf` 在
 - [ ] 换图页：figcrop 输出不含论文题注（幻灯片 caption 写 "Paper Fig. N: …"），没有 `WARN no figure pixels`

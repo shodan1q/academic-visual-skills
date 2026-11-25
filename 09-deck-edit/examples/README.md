@@ -20,15 +20,15 @@ python3 $F start                                    # 输入清单、工作单�
 python3 $K figcrop /input/paper.pdf 2 "Fig. 2" $WORK_DIR/fig2.png
 # 写 $WORK_DIR/plan.md 与 $WORK_DIR/spec_v1.json
 python3 $F build $WORK_DIR/spec_v1.json             # 构建 + diff_v0_v1.txt + 复制到 $OUT_DIR/presentation.pptx
-# 写 $WORK_DIR/facts.json（content_map、instructions_done、exceptions、uncertainty）与 change_log.md
-python3 $F finish --slides 6 --keep-map 1:1,2:2,4:4 --edit-map 3:3,6:5     # 渲染成稿与初始稿、记录、result.json、checker（最后跑）
+# 写 $WORK_DIR/facts.json（content_map 每个改动页带 instruction、instructions_done、exceptions、uncertainty）
+python3 $F finish --slides 6                        # 渲染成稿与初始稿、自动写 change_log.md、result.json、checker（最后跑）
 ```
 `spec_v1.json`（示例）：
 ```json
 {"template": "/app/work/v0.pptx", "out": "/app/work/v1.pptx", "footer": "组会汇报", "slide_numbers": true,
  "slides": [{"keep": 1}, {"keep": 2},
-  {"layout": "标题和内容", "title": "方法：共沉淀制备 4 个 Ce 负载量",
-   "body": ["Ce 负载 0、0.5、1、2 wt%，400 °C 焙烧 4 h", "1% CO / 20% O2 / N2，GHSV 30,000 mL g-1 h-1", "每个条件重复 n = 3"], "notes": "E1 …"},
+  {"keep": 3, "set": {"body": ["Ce 负载 0、0.5、1、2 wt%，400 °C 焙烧 4 h", "1% CO / 20% O2 / N2，GHSV 30,000 mL g-1 h-1", "每个条件重复 n = 3"]},
+   "source_note": "原文 Sec. 2", "notes": "E1 …"},
   {"keep": 4},
   {"layout": "标题和内容", "title": "1Ce 在 250 °C 下 50 h 不失活", "image": "/app/work/fig2.png", "caption": "原文 Fig. 2", "notes": "E2 …"},
   {"keep": 5, "replace": {"保持 50 h": "保持 50 h；局限：未测水蒸气条件"}, "notes": "E3 …"}]}
@@ -45,7 +45,15 @@ python3 $F finish --slides 6 --keep-map 1:1,2:2,4:4 --edit-map 3:3,6:5     # 渲
 -   [ph:obj] 保持 50 h
 +   [ph:obj] 保持 50 h；局限：未测水蒸气条件
 ```
-`change_log.md`（示例一行）：`| v1 | E3 | 6 | 保持 50 h | 保持 50 h；局限：未测水蒸气条件 | 原文 Sec.4 | 去掉 replace |`
+build 末尾的 edit scope（示例）：`slide 3 (was 3) edited in place, notes changed: 1/2 shapes identical; changed: placeholder obj 'Content Placeholder 2' (text)`
+`change_log.md`（示例节选，finish 自动生成）：
+```
+| 3 | 3 | edited in place, notes changed | E1 | 2 baseline shapes: 1 byte-identical; changed: placeholder obj 'Content Placeholder 2' (text); every shape kept its place and formatting |
+### Slide 3 (baseline slide 3) - edited in place - instruction E1
+Instruction E1 (verbatim): compress slide 3 (methods) to at most 3 bullets
+Text before -> after:  - Ce 负载：0、0.5、1、2 wt%  …  + Ce 负载 0、0.5、1、2 wt%，400 °C 焙烧 4 h
+Rollback: in versions/spec_v1.json replace entry 3 by {"keep": 3} and rebuild …
+```
 `result.json`（示例节选）：
 ```json
 {"case_id": "demo-09", "status": "complete",

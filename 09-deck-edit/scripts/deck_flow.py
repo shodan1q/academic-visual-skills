@@ -6,14 +6,17 @@
                                               # pre-check the starting deck against the paper (-> precheck.md)
   python3 deck_flow.py build SPEC.json        # build one version, snapshot its text, diff against v0 and the previous version,
                                               # copy deck + spec + diff into $OUT_DIR at once (a deliverable exists after every build)
-  python3 deck_flow.py finish --slides N --keep-map 1:1,2:2 --edit-map 3:3 [--fact-check] [--min-pt 18] [--template T.pptx]
-                                              # render final (+ starting deck for comparison), copy the records, write
-                                              # time_record.json, assemble result.json from facts.json, run the checker last
+                                              # and print an edit-scope check: which shapes of each edited slide changed / were lost
+  python3 deck_flow.py finish --slides N [--fact-check] [--min-pt 18] [--keep-map 1:1,2:2 --edit-map 3:3] [--template T.pptx]
+                                              # render final (+ starting deck for comparison), copy the records, write the
+                                              # per-slide change log (before/after, shapes touched, reason, rollback) from the
+                                              # files themselves, time_record.json, assemble result.json, run the checker last
+                                              # (keep/edit maps are derived from the delivered spec when not given)
 
 Paths: CASE_JSON (/input/case.json), WORK_DIR (/app/work), OUT_DIR (/app/output). No step raises: a missing tool or file is
 printed and recorded, the remaining steps still run. Everything here can also be done by hand with the two underlying scripts.
 """
-import datetime, difflib, glob, json, os, re, shutil, subprocess, sys, time
+import datetime, difflib, glob, hashlib, json, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT, CHK = os.path.join(HERE, "pptx_kit.py"), os.path.join(HERE, "check_result.py")
@@ -79,6 +82,182 @@ def find_inputs():
             "data": [f for f in files if f.lower().endswith((".csv", ".tsv", ".xlsx", ".txt", ".md", ".tex")) and not f.lower().endswith("task.md")]}
 
 
+def instructions(wo):
+    """Edit instructions of the work order as an ordered {E1: verbatim text} dict (labels already present are kept)."""
+    best = []
+    def walk(o, key=""):
+        nonlocal best
+        if isinstance(o, dict):
+            for k, v in o.items():
+                walk(v, str(k))
+        elif isinstance(o, list):
+            if o and all(isinstance(x, (str, dict)) for x in o) and re.search(r"edit|instruct|change|request|revision|task|step|修改|指令|编辑|改动|要求", key, re.I) and len(o) > len(best):
+                best = o
+            for x in o:
+                walk(x, key)
+    walk(wo)
+    out = {}
+    for n, x in enumerate(best, 1):
+        t = x if isinstance(x, str) else json.dumps(x, ensure_ascii=False)
+        m = re.match(r"\s*(E\d+)\s*[:：.)-]\s*(.*)", t, re.S)
+        out[m.group(1) if m else "E%d" % n] = (m.group(2) if m else t).strip()
+    return out
+
+
+def inventory(path):
+    """Per slide: every shape (footer placeholders left out) with kind, name, text, position and a content hash."""
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, HERE) if HERE not in sys.path else None
+    import pptx_kit as K
+    z, slides, _, _ = K.load(path)
+    out = []
+    for sl in slides:
+        x, sr, items = K.rd(z, sl), K.rels(z, sl), []
+        for m in re.finditer(K.SHAPE, x, re.S):
+            b = m.group(0)
+            ph = K._pht(b)
+            if ph in K.FOOT:
+                continue
+            kind = "picture" if b.startswith("<p:pic") else "table" if "<a:tbl>" in b else "graphic object" if b.startswith("<p:graphicFrame") else ("placeholder " + ph) if ph else "text box"
+            off, emb = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"/>\s*<a:ext cx="(\d+)" cy="(\d+)"', b), re.search(r'r:embed="([^"]+)"', b)
+            media = hashlib.md5(z.get(sr.get(emb.group(1), ("", ""))[1], b"")).hexdigest()[:8] if emb else ""
+            items.append({"kind": kind, "name": K._name(b), "text": " / ".join(t for t in K.text_of(b) if t.strip()), "box": off.groups() if off else None, "media": media,
+                          "raw": hashlib.md5(re.sub(r'<p:cNvPr id="\d+"', "", b).encode("utf-8")).hexdigest()})
+        out.append(items)
+    return out
+
+
+def scope(old, new):
+    """Shape-level comparison of one baseline slide with its new version: (untouched, changed, removed, added) lists of readable labels."""
+    lab = lambda s: "%s '%s'%s" % (s["kind"], s["name"], (' "%s"' % s["text"][:40]) if s["text"] and s["kind"] in ("text box", "table") else "")
+    left, same, changed, removed = list(new), [], [], []
+    for o in old:
+        hit = next((n for n in left if n["raw"] == o["raw"]), None)
+        if hit:
+            same.append(lab(o))
+            left.remove(hit)
+    for o in old:
+        if any(o["raw"] == n["raw"] for n in new):
+            continue
+        hit = (next((n for n in left if o["media"] and n["media"] == o["media"]), None) or next((n for n in left if n["kind"] == o["kind"] and n["name"] == o["name"]), None)
+               or next((n for n in left if n["kind"] == o["kind"] and o["text"] and n["text"] == o["text"]), None))
+        if hit:
+            left.remove(hit)
+            what = [w for w, c in (("text", hit["text"] != o["text"]), ("position/size", hit["box"] != o["box"] and o["box"] and hit["box"]), ("picture file", hit["media"] != o["media"])) if c]
+            changed.append("%s (%s)" % (lab(o), ", ".join(what) or "formatting / re-created with the same content"))
+        else:
+            removed.append(lab(o))
+    return same, changed, removed, [lab(n) for n in left]
+
+
+def slide_map(S, a, b, kmap=None, emap=None):
+    """For every slide of the delivered spec: (mode, baseline slide or None). mode = kept | notes only | edited in place | rebuilt | new."""
+    wd = lambda t: set(re.findall(r"\w[\w.%/+-]*", t.lower()))
+    out, used = [], set()
+    for i, e in enumerate(S.get("slides") or [], 1):
+        if isinstance(e, dict) and "keep" in e:
+            j = int(e["keep"])
+            mode = "edited in place" if any(e.get(k) for k in ("replace", "set", "remove", "image", "source_note")) else "notes only" if e.get("notes") is not None else "kept"
+            out.append((mode, j))
+            used.add(j)
+        else:
+            out.append(("rebuilt", int(e["from"]) if isinstance(e, dict) and str(e.get("from", "")).isdigit() else (emap or {}).get(i)))
+    used |= {j for m, j in out if j}
+    for i, (m, j) in enumerate(out, 1):  # rebuilt slides without "from": the most similar unused baseline slide, else new
+        if m == "rebuilt" and j is None and i <= len(a):
+            nums = lambda t: set(re.findall(r"\d+(?:\.\d+)?", t))  # a translated slide shares its numbers, not its words
+            sim = lambda x, y: max(len(wd(x) & wd(y)) / float(len(wd(x) | wd(y)) or 1), (len(nums(x) & nums(y)) / float(len(nums(x) | nums(y)) or 1)) if len(nums(x) & nums(y)) >= 2 else 0)
+            c = sorted(((sim(a[i - 1][0], b[k - 1][0]) + 0.1 / (1 + abs(i - k)), k) for k in range(1, len(b) + 1) if k not in used), reverse=True)
+            if c and c[0][0] >= 0.3:
+                out[i - 1] = ("rebuilt", c[0][1])
+                used.add(c[0][1])
+            else:
+                out[i - 1] = ("new", None)
+    return out
+
+
+def change_record(deck, v0, spec_path, k, fx, vd, emap_given=None):
+    """Compare the delivered deck with the starting deck slide by slide and shape by shape. Returns (markdown, summary rows, warnings, kmap, emap)."""
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, HERE) if HERE not in sys.path else None
+    import check_result as C
+    S = rj(spec_path, {}) or {}
+    a, b, ia, ib = C.slides_of(deck), C.slides_of(v0), inventory(deck), inventory(v0)
+    sm = slide_map(S, a, b, emap=emap_given)
+    ins = rj(os.path.join(WORK, "instructions.json"), {}) or {}
+    cm = {int(r["slide"]): r for r in (fx.get("content_map") or []) if isinstance(r, dict) and str(r.get("slide", "")).isdigit()}
+    done = fx.get("instructions_done") if isinstance(fx.get("instructions_done"), dict) else {}
+    ln = lambda t: [x.strip() for x in t.split("\n") if x.strip()]
+    rows, detail, summary, warns, kmap, emap = [], [], [], [], {}, {}
+    seq = [j for _, j in sm[:len(a)] if j]  # baseline numbers in their new order; slides outside the longest increasing run were moved
+    best = []
+    for x in seq:
+        cand = max([c for c in best if c[-1] < x], key=len, default=[]) + [x]
+        best.append(cand)
+    moved = set(seq) - set(max(best, key=len, default=[]))
+    for i, (mode, j) in enumerate(sm, 1):
+        if i > len(a):
+            break
+        t, n = a[i - 1]
+        ok_j = j is not None and 1 <= j <= len(b)
+        if mode == "kept" and ok_j and b[j - 1] == (t, n) and [s["raw"] for s in ia[i - 1]] == [s["raw"] for s in ib[j - 1]]:
+            kmap[i] = j
+            rows.append("| %d | %d | kept: every shape and the notes identical%s | - | - |" % (i, j, ", moved (was slide %d)" % j if j in moved else ""))
+            continue
+        e = (S.get("slides") or [])[i - 1] if i <= len(S.get("slides") or []) else {}
+        tag = str((cm.get(i) or {}).get("instruction") or "").strip(" -") or ",".join(dict.fromkeys(re.findall(r"\bE\d+\b", str(e.get("notes") or "") if isinstance(e, dict) else ""))) or "none recorded"
+        if not ok_j:
+            rows.append("| %d | - | new slide | %s | %d shapes added |" % (i, tag, len(ia[i - 1])))
+            detail.append("### Slide %d - new slide - instruction %s\n%s\n\nAfter:\n%s\n\nRollback: delete entry %d from versions/spec_v%d.json and rebuild.\n" % (
+                i, tag, "".join("Instruction %s (verbatim): %s\n" % (e, ins[e]) for e in re.findall(r"E\d+", tag) if e in ins), "\n".join("+ " + x[:160] for x in ln(t)[:14]), i, k))
+            summary.append({"slide": i, "baseline_slide": None, "change": "new slide", "instruction": tag, "rollback": "delete spec entry %d, rebuild" % i})
+            if tag == "none recorded":
+                warns.append("slide %d is new but no instruction is recorded for it in facts.json content_map" % i)
+            continue
+        emap[i] = j
+        bt, bn = b[j - 1]
+        same, chg, rem, add = scope(ib[j - 1], ia[i - 1])
+        minus, plus = [x for x in ln(bt) if x not in ln(t)], [x for x in ln(t) if x not in ln(bt)]
+        sc = "%d baseline shapes: %d byte-identical" % (len(ib[j - 1]), len(same)) + ("; changed: " + "; ".join(chg) if chg else "") + ("; not carried over: " + "; ".join(rem) if rem else "") + ("; added: " + "; ".join(add) if add else "")
+        if not mode.startswith("rebuilt") and not rem:
+            sc += "; every shape kept its place and formatting" if not any("position" in c for c in chg) else ""
+        if j in moved:
+            mode += ", moved (was slide %d)" % j
+        if mode == "kept":
+            mode = "edited in place"
+        rows.append("| %d | %d | %s%s | %s | %s |" % (i, j, mode, ", notes changed" if bn != n else "", tag, sc.replace("|", "/")[:260]))
+        d = ["### Slide %d (baseline slide %d) - %s - instruction %s" % (i, j, mode, tag)]
+        d += ["Instruction %s (verbatim): %s" % (e, ins[e]) for e in re.findall(r"E\d+", tag) if e in ins]
+        d += ["Reason / what was done (author): %s" % done[e] for e in re.findall(r"E\d+", tag) if e in done]
+        d += ["Scope (computed from the two files): " + sc + "."]
+        if minus or plus:
+            d += ["", "Text before -> after:"] + ["- " + x[:200] for x in minus[:12]] + ["+ " + x[:200] for x in plus[:12]]
+        if bn != n:
+            d += ["", "Notes before: " + (bn[:300] or "(none)"), "Notes after:  " + (n[:400] or "(none)")]
+        d += ["", "Rollback: in versions/spec_v%d.json replace entry %d by {\"keep\": %d} and rebuild (python3 pptx_kit.py build versions/spec_v%d.json); the untouched starting deck is versions/v0.pptx." % (k, i, j, k), ""]
+        detail.append("\n".join(d))
+        summary.append({"slide": i, "baseline_slide": j, "change": mode + (", notes changed" if bn != n else ""), "instruction": tag, "shapes_identical": "%d/%d" % (len(same), len(ib[j - 1])),
+                        "shapes_changed": chg, "shapes_not_carried_over": rem, "shapes_added": add, "text_out": minus[:6], "text_in": plus[:6], "rollback": "spec entry %d -> {\"keep\": %d}, rebuild" % (i, j)})
+        if tag == "none recorded":
+            warns.append("slide %d differs from baseline slide %d but no instruction is recorded for it (facts.json content_map[].instruction) -> name the instruction or restore it with {\"keep\": %d}" % (i, j, j))
+        hand = [r for r in rem if not r.startswith("placeholder")]  # pictures, tables, text boxes, drawings: content somebody placed by hand
+        summary[-1]["hand_placed_shapes_lost"] = hand
+        if hand and mode.startswith("rebuilt"):
+            warns.append("slide %d was rebuilt and lost baseline shapes: %s -> if the instruction only changes text, edit in place instead: {\"keep\": %d, \"set\": {\"title\": ..., \"body\": [...]}}" % (i, "; ".join(hand)[:200], j))
+    gone = [g for g in range(1, len(b) + 1) if g not in set(kmap.values()) | set(emap.values())]
+    for g in gone:
+        summary.append({"slide": None, "baseline_slide": g, "change": "deleted: %s" % (ln(b[g - 1][0]) or [""])[0][:60], "rollback": "add {\"keep\": %d} to the spec, rebuild" % g})
+    ks = sorted(int(m) for m in re.findall(r"spec_v(\d+)\.json", " ".join(os.listdir(vd)))) if os.path.isdir(vd) else [k]
+    md = ("## Verified change record (computed by deck_flow.py from starting-deck v0 and the delivered deck; not hand-written)\n\n"
+          "%d -> %d slides. Identical to the starting deck: %s. Changed or new: %s. Deleted baseline slides: %s.\n\n"
+          "| slide | baseline slide | change | instruction | shapes touched |\n|---|---|---|---|---|\n%s\n\n%s\n"
+          % (len(b), len(a), sorted(kmap) or "none", sorted(set(range(1, len(a) + 1)) - set(kmap)) or "none",
+             "; ".join("%d '%s' (rollback: add {\"keep\": %d} to the spec)" % (g, (ln(b[g - 1][0]) or [""])[0][:50], g) for g in gone) or "none", "\n".join(rows), "\n".join(detail)))
+    md += "## Changes without a recorded instruction\n" + ("\n".join("- " + w for w in warns if "no instruction" in w) or "- none: every changed slide is tied to an instruction") + "\n\n"
+    md += "## Versions\n- v0 = starting deck as received (versions/v0.pptx, v0.txt, v0_before.pdf)\n" + "".join("- v%d = versions/spec_v%d.json%s\n" % (x, x, " (delivered)" if x == ks[-1] else "; diff to the next version: versions/diff_v%d_v%d.txt" % (x, x + 1)) for x in ks)
+    return md, summary, warns, kmap, emap
+
+
 def start():
     os.makedirs(WORK, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
@@ -90,8 +269,15 @@ def start():
     sh([sys.executable, CHK, "--init"])
     for k in ("workorder", "material"):
         if inp[k] and os.path.getsize(inp[k]) < 60000:
-            print("\n== %s: %s (read every field; copy the edit instructions verbatim as E1, E2, ...) ==" % (k, inp[k]))
+            print("\n== %s: %s (read every field) ==" % (k, inp[k]))
             print(open(inp[k], encoding="utf-8", errors="ignore").read())
+    try:
+        ins = instructions(rj(inp["workorder"], {})) if inp["workorder"] else {}
+        if ins:
+            json.dump(ins, open(os.path.join(WORK, "instructions.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            print("\n== edit instructions, numbered (use exactly these labels in plan.md / facts.json; saved to %s/instructions.json) ==\n%s" % (WORK, "\n".join("%s: %s" % kv for kv in ins.items())))
+    except Exception as e:
+        print("(instructions not numbered: %s)" % e)
     tpl_out = ""
     if inp["template"]:
         print("\n== template: %s ==" % inp["template"])
@@ -175,6 +361,23 @@ def build(spec):
     name = os.environ.get("DELIVER_NAME", "presentation.pptx")
     if cp(deck, os.path.join(OUT, name)):
         print("\ndelivered v%d -> %s (spec + diff in %s). Roll back = rebuild the previous spec_v*.json." % (k, os.path.join(OUT, name), vd))
+    v0p = os.path.join(WORK, "v0.pptx")
+    if os.path.exists(v0p):
+        try:  # edit-scope check: what each changed slide kept, changed and lost, shape by shape
+            md, summary, cw, km, em = change_record(deck, v0p, spec, k, rj(os.path.join(WORK, "facts.json"), {}) or {}, vd)
+            print("\n== edit scope vs starting deck (shape level) ==\nidentical slides: %s" % (sorted(km) or "none"))
+            for r in summary:
+                if r.get("slide") and r.get("baseline_slide"):
+                    print("slide %d (was %d) %s: %s shapes identical%s%s%s" % (r["slide"], r["baseline_slide"], r["change"], r["shapes_identical"],
+                          "; changed: " + "; ".join(r["shapes_changed"]) if r["shapes_changed"] else "", "; not carried over: " + "; ".join(r["shapes_not_carried_over"]) if r["shapes_not_carried_over"] else "",
+                          "; added: " + "; ".join(r["shapes_added"]) if r["shapes_added"] else ""))
+                else:
+                    print("slide %s: %s" % (r.get("slide") or "-", r["change"] if r.get("slide") else "baseline slide %d %s" % (r["baseline_slide"], r["change"])))
+            for w in cw:
+                if "no instruction" not in w:
+                    print("SCOPE WARN: " + w)
+        except Exception as e:
+            print("(edit-scope check skipped: %s)" % e)
     nw = sum(1 for l in out.splitlines() if l.startswith("WARN"))
     print("build WARN lines: %d%s" % (nw, " -> fix overflow by cutting words / splitting, at most 2 rebuilds; then record the rest" if nw else ""))
 
@@ -218,10 +421,10 @@ def finish(argv):
             print("(starting deck not rendered: %s)" % out.strip()[-120:])
     elif os.path.exists(v0):
         print("(starting-deck render skipped: %s)" % ("--no-before" if a.no_before else "no renderer" if not rendered else "time budget"))
-    for f in ("plan.md", "corrections.md", "precheck.md", "change_log.md", "content_map.json"):
+    for f in ("plan.md", "corrections.md", "precheck.md", "content_map.json", "instructions.json"):
         src = os.path.join(WORK, f)
         if os.path.exists(src):
-            cp(src, os.path.join(OUT if f in ("plan.md", "corrections.md", "change_log.md", "content_map.json") else vd, f))
+            cp(src, os.path.join(OUT if f in ("plan.md", "corrections.md", "content_map.json") else vd, f))
     for f in glob.glob(os.path.join(WORK, "spec_v*.json")) + glob.glob(os.path.join(WORK, "diff_v*.txt")) + glob.glob(os.path.join(WORK, "v[0-9]*.txt")):
         cp(f, os.path.join(vd, os.path.basename(f)))
     fx = rj(os.path.join(WORK, "facts.json"), {}) or {}
@@ -231,18 +434,31 @@ def finish(argv):
     if isinstance(fx.get("content_map"), list) and not os.path.exists(os.path.join(OUT, "content_map.json")):
         json.dump(fx["content_map"], open(os.path.join(OUT, "content_map.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     cl = fx.get("change_log")
-    if cl and not os.path.exists(os.path.join(OUT, "change_log.md")):
-        open(os.path.join(OUT, "change_log.md"), "w", encoding="utf-8").write("# Change log\n\n" + (cl if isinstance(cl, str) else "\n".join(x if isinstance(x, str) else json.dumps(x, ensure_ascii=False) for x in cl)) + "\n")
-    if not os.path.exists(os.path.join(OUT, "change_log.md")):  # never deliver without a change record: draft one from what is known
-        ks = sorted(int(m) for m in re.findall(r"spec_v(\d+)\.json", " ".join(os.listdir(vd))))
-        back = lambda k: "rebuild versions/spec_v%d.json" % (k - 1) if k > 1 else "deliver the starting deck (v0) again, or rebuild with {\"keep\": n} for that slide"
+    author = ""
+    if os.path.exists(os.path.join(WORK, "change_log.md")):
+        author = open(os.path.join(WORK, "change_log.md"), encoding="utf-8", errors="ignore").read().strip()
+    elif cl:
+        author = cl if isinstance(cl, str) else "\n".join(x if isinstance(x, str) else json.dumps(x, ensure_ascii=False) for x in cl)
+    ks = sorted(int(m) for m in re.findall(r"spec_v(\d+)\.json", " ".join(os.listdir(vd))))
+    kmap_auto, emap_auto, verified = {}, {}, ""
+    if os.path.exists(v0) and ks:
+        cp(v0, os.path.join(vd, "v0.pptx"))
+        try:
+            verified, summary, cw, kmap_auto, emap_auto = change_record(deck, v0, os.path.join(vd, "spec_v%d.json" % ks[-1]), ks[-1], fx, vd,
+                                                                       {int(x): int(y) for x, y in re.findall(r"(\d+)\s*:\s*(\d+)", a.edit_map or "")})
+            json.dump(summary, open(os.path.join(WORK, "change_summary.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            cp(os.path.join(WORK, "change_summary.json"), os.path.join(vd, "change_summary.json"))
+            print("change_log.md: verified per-slide record written (%d changed/new slides, %d identical)" % (len([r for r in summary if r.get("slide")]), len(kmap_auto)))
+            for w in cw:
+                print("SCOPE WARN: " + w)
+        except Exception as e:
+            print("(verified change record skipped: %s)" % e)
+    if not verified:  # no starting deck (generate) or comparison failed: still deliver a change record from what is known
         done = fx.get("instructions_done") if isinstance(fx.get("instructions_done"), dict) else {}
-        rows = ["| v%d | %s | %s | %s |" % (ks[-1] if ks else 1, k, str(v).replace("|", "/")[:200], back(ks[-1] if ks else 1)) for k, v in done.items()]
-        open(os.path.join(OUT, "change_log.md"), "w", encoding="utf-8").write(
-            "# Change log (drafted by deck_flow.py from facts.json; line-level before/after: version_diff.md, versions/diff_v*.txt)\n\n"
-            "| version | instruction | what changed (slide, evidence) | rollback |\n|---|---|---|---|\n" + ("\n".join(rows) or "| - | - | no instructions_done in facts.json | - |") +
-            "\n\n## Versions\n- v0 = starting deck as received (versions/v0.txt, v0_before.pdf)\n" + "".join("- v%d = versions/spec_v%d.json%s\n" % (k, k, " (delivered)" if k == ks[-1] else "") for k in ks))
-        print("change_log.md drafted from facts.json (write your own $WORK_DIR/change_log.md for before/after wording and reasons)")
+        verified = ("## Build record\n\n| version | item | what was done | rollback |\n|---|---|---|---|\n" + ("\n".join("| v%d | %s | %s | rebuild versions/spec_v%d.json |" % (ks[-1] if ks else 1, a_, str(b_).replace("|", "/")[:200], max((ks[-1] if ks else 1) - 1, 1)) for a_, b_ in done.items())
+                    or "| v%d | deck | built from the template (no starting deck to compare with) | rebuild the spec |" % (ks[-1] if ks else 1)) +
+                    "\n\n## Versions\n" + "".join("- v%d = versions/spec_v%d.json%s\n" % (x, x, " (delivered)" if x == ks[-1] else "") for x in ks))
+    open(os.path.join(OUT, "change_log.md"), "w", encoding="utf-8").write("# Change log\n\n" + ("## Author's log\n\n" + re.sub(r"^# .*\n", "", author).strip() + "\n\n" if author else "") + verified)
     secs = [(r.get("slide"), r.get("seconds")) for r in (cm or []) if isinstance(r, dict) and isinstance(r.get("seconds"), (int, float))]
     tr = {"run_started_utc": (open(os.path.join(WORK, "t_start")).read().strip() if os.path.exists(os.path.join(WORK, "t_start")) else None), "run_finished_utc": now(),
           "run_seconds": round(elapsed()), "talk_seconds_per_slide": dict(secs), "talk_seconds_total": sum(s for _, s in secs) or None}
@@ -267,8 +483,11 @@ def finish(argv):
         cmd += ["--source", os.path.join(WORK, "v0.txt")]
     else:  # no starting deck: numbers must come from the papers / data files, never from the deck's own snapshot
         cmd += ["--source"] + sorted(glob.glob(os.path.join(WORK, "paper*.txt"))) + [f for f in inp.get("data") or [] if f.lower().endswith((".csv", ".tsv", ".txt", ".md", ".tex")) and os.path.exists(f)]
-    if os.path.exists(v0) and a.keep_map:
-        cmd += ["--baseline", v0, "--keep-map", a.keep_map] + (["--edit-map", a.edit_map] if a.edit_map else [])
+    fmt = lambda d: ",".join("%d:%d" % kv for kv in sorted(d.items()))
+    km, em = a.keep_map or fmt(kmap_auto), a.edit_map or fmt(emap_auto)
+    if os.path.exists(v0) and (km or em):
+        cmd += ["--baseline", v0] + (["--keep-map", km] if km else []) + (["--edit-map", em] if em else [])
+        print("slide maps %s: keep %s | edited %s" % ("as given" if a.keep_map else "derived from the delivered spec and files", km or "-", em or "-"))
     rc, out = sh(cmd, 120)
     if rc != 0:  # never leave "complete" standing next to FAIL rows: the record must be true even if no further call follows
         res = rj(os.path.join(OUT, "result.json"))

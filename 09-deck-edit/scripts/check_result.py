@@ -346,6 +346,10 @@ def assemble(case, out_path, facts_path):
         files["spec"] = specs[-1]
     cm = fx.get("content_map") or safe(lambda: rdj(files.get("content_map"))) or [{"slide": i, "title": t.split("\n")[0][:90]} for i, (t, _) in enumerate(sl, 1)]
     lines = lambda k: [l.strip("-* ").strip() for l in safe(lambda: Path(files[k]).read_text(encoding="utf-8").splitlines(), []) if l.strip("-*# ").strip()]
+    wd_ = os.environ.get("WORK_DIR", "/app/work")
+    csum = safe(lambda: rdj(os.path.join(wd_, "change_summary.json")))
+    clog = ({"file": files.get("change_log"), "entries": csum, "note": "entries are computed from the starting deck and the delivered deck (slide, change, instruction, shapes touched, rollback)"}
+            if csum else fx.get("change_log") or lines("change_log") or ["single build, no revisions"])
     errs = list(rj.get("errors") or [])
     exc = fx.get("exceptions") or {"material_missing": fx.get("material_gaps") or [], "undecidable": [], "run_failures": errs}
     if isinstance(exc, dict) and errs and not exc.get("run_failures"):
@@ -356,12 +360,12 @@ def assemble(case, out_path, facts_path):
                         "template": fx.get("template"), "versions": fx.get("versions") or vers, "slide_titles": [t.split("\n")[0][:90] for t, _ in sl]},
            "render": {"pptx": deck, "pdf": pdf, "png": png, "pages": rj.get("pages"), "renderer": rj.get("renderer") or "none (see run_failures)",
                       "fonts": rj.get("fonts"), "substitutions": rj.get("substitutions"), "render_record": files.get("render_record"), "slide_audit": files.get("slide_audit"),
-                      "change_log": fx.get("change_log") or lines("change_log") or ["single build, no revisions"]},
+                      "before_version_pdf": next(iter(glob.glob(os.path.join(od, "versions", "v0_before.pdf"))), None), "change_log": files.get("change_log")},
            "evidence": {"rows": cm, "file": files.get("content_map")}, "compliance": fx.get("compliance_checks") or fx.get("compliance") or
            [{"check": "deck opens and has %d slides" % len(sl), "result": "PASS" if sl else "FAIL", "basis": "zip/XML read"},
             {"check": "PDF + PNG previews", "result": "PASS" if pdf and png else "FAIL", "basis": rj.get("status") or "files on disk"}],
            "exceptions": exc, "uncertainty": fx.get("uncertainty") or ["no open issues recorded beyond exceptions"],
-           "change_log": fx.get("change_log") or lines("change_log") or ["single build, no revisions"],
+           "change_log": clog,
            "plan": fx.get("plan") or lines("plan") or [t.split("\n")[0][:90] for t, _ in sl], "notes": [{"slide": i, "notes": n[:200]} for i, (_, n) in enumerate(sl, 1)]}
     val["summary"] = {"files": dict(files, pptx=deck, pdf=pdf), "slides": len(sl), "status": st}
     clean = lambda v: {k: x for k, x in v.items() if not empty(x)} if isinstance(v, dict) else v
@@ -394,8 +398,8 @@ def assemble(case, out_path, facts_path):
     if words:
         st = next((w for w in words if w.lower().startswith(st[:4].lower())), words[0] if st == "complete" else words[-1])
     for k in ("source_map", "change_log", "uncertainty", "material_gaps", "exceptions"):
-        res.setdefault(k, fx.get(k) or {"source_map": files.get("content_map") or val["evidence"], "change_log": val["change_log"], "uncertainty": val["uncertainty"],
-                                       "material_gaps": (exc.get("material_missing") if isinstance(exc, dict) else None) or ["none recorded"], "exceptions": exc}[k])
+        res.setdefault(k, (None if k == "change_log" and csum else fx.get(k)) or {"source_map": files.get("content_map") or val["evidence"], "change_log": val["change_log"], "uncertainty": val["uncertainty"],
+                                       "material_gaps": ((exc.get("material_gaps") or exc.get("material_missing")) if isinstance(exc, dict) else None) or ["none recorded"], "exceptions": exc}[k])
     for k, v in fx.items():
         res.setdefault(k, v)
     res["case_id"], res["status"] = val["case_id"], st
@@ -457,11 +461,12 @@ def baseline_check(deck, base, kmap, out_md, fails, warns, emap=None):
 GENERIC = re.compile(r"^\s*(results?|methods?|methodology|introduction|background|conclusions?|discussion|summary|outline|experiments?|结果|方法|背景|引言|结论|讨论|总结|实验)\s*$", re.I)
 
 
-def storyline_check(sl, res, warns):
-    """Claim titles and page-type coverage (cover, motivation, method, result, conclusion)."""
+def storyline_check(sl, res, warns, inherited=()):
+    """Claim titles and page-type coverage (cover, motivation, method, result, conclusion).
+    Titles inherited unchanged from the starting deck are not flagged: retitling them would be an edit nobody asked for."""
     for i, (t, _) in enumerate(sl, 1):
         ttl = t.split("\n")[0]
-        if i > 1 and GENERIC.match(ttl):
+        if i > 1 and GENERIC.match(ttl) and ttl not in inherited:
             warns.append("slide %d title %r is a topic, not a claim -> write the finding as the title" % (i, ttl))
     blob = (json.dumps(res, ensure_ascii=False) + " ".join(t for t, _ in sl)).lower()
     need = {"motivation/problem": r"motivat|problem|background|gap|question|动机|问题|背景", "method": r"method|approach|design|方法|做法|实验设计",
@@ -494,13 +499,29 @@ def record_checks(out, res, a, fails, warns):
         w = [m for m in warns if re.search(rx, m, re.I)]
         rows.append({"check": name, "result": "FAIL" if f else "WARN" if w else "PASS", "basis": ("; ".join((f + w)[:2])[:300] if f or w else basis), "by": "check_result.py"})
     done = res.get("instructions_done")
-    if isinstance(done, dict):
-        rows += [{"check": "instruction %s executed" % k, "result": "PASS" if v and not re.search(r"not done|未执行|skipped|FAIL", json.dumps(v, ensure_ascii=False), re.I) else "WARN",
-                  "basis": (v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))[:200], "by": "check_result.py"} for k, v in done.items()]
+    try:
+        cs = json.loads(Path(os.path.join(os.environ.get("WORK_DIR", "/app/work"), "change_summary.json")).read_text(encoding="utf-8")) if a.baseline else None
+    except Exception:
+        cs = None
+    if isinstance(done, dict) or cs:
+        for k, v in (done.items() if isinstance(done, dict) else []):
+            txt = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+            ok = bool(v) and not re.search(r"not done|未执行|未完成|skipped|FAIL", txt, re.I)
+            hit = [r for r in cs or [] if isinstance(r, dict) and r.get("slide") and re.search(r"\b%s\b" % re.escape(str(k)), str(r.get("instruction", "")))]
+            seen = "; ".join("slide %s %s%s" % (r["slide"], r.get("change", ""), (", %s shapes identical" % r["shapes_identical"]) if r.get("shapes_identical") else "") for r in hit)
+            rows.append({"check": "instruction %s executed" % k, "result": "PASS" if ok else "WARN", "basis": txt[:200],
+                         "file_diff": seen or ("no changed slide is tagged with %s in content_map (deletions/moves show in change_log.md)" % k if cs is not None else "no starting deck to diff against"),
+                         "by": "author statement + check_result.py file diff"})
+        if cs:
+            lost = ["slide %s: %s" % (r["slide"], "; ".join(r["hand_placed_shapes_lost"])[:160]) for r in cs if isinstance(r, dict) and r.get("hand_placed_shapes_lost")]
+            untag = [str(r["slide"]) for r in cs if isinstance(r, dict) and r.get("slide") and str(r.get("instruction")) == "none recorded"]
+            rows.append({"check": "edit scope: changes limited to instructed slides and shapes", "result": "WARN" if lost or untag else "PASS",
+                         "basis": ("; ".join((["pictures/tables/text boxes of the starting slide not carried over (fine only if the instruction asked to replace them) - " + x for x in lost]) + (["changed slides without a recorded instruction: " + ",".join(untag)] if untag else []))[:400]
+                                   if lost or untag else "every changed slide is tied to an instruction; no picture, table or hand-placed text box of the starting deck was dropped (change_log.md)"), "by": "check_result.py"})
     key = next((k for k in res if re.search(r"compliance|check|verif|validation|合规|检查|核对|校验", k, re.I) and k != "checker_record"), "compliance_checks")
     cur = res.get(key)
     if isinstance(cur, list):
-        res[key] = [r for r in cur if not (isinstance(r, dict) and r.get("by") == "check_result.py")] + rows
+        res[key] = [r for r in cur if not (isinstance(r, dict) and "check_result.py" in str(r.get("by")))] + rows
     elif isinstance(cur, dict):
         cur["automated_checks"] = rows
     else:
@@ -586,10 +607,14 @@ def main():
         evidence_rows(res, len(sl), warns)
         kmap = {int(x): int(y) for x, y in re.findall(r"(\d+)\s*:\s*(\d+)", a.keep_map or "")}
         pres = {int(v) for v in re.findall(r"\d+", a.preserved or "")} | set(kmap)
-        if a.baseline and kmap:
+        if a.baseline:
             baseline_check(d, a.baseline, kmap, os.path.join(os.path.dirname(a.out), "version_diff.md"), fails, warns,
                            {int(x): int(y) for x, y in re.findall(r"(\d+)\s*:\s*(\d+)", a.edit_map or "")})
-        storyline_check(sl, res, warns)
+        try:
+            inh = {t.split("\n")[0] for t, _ in slides_of(a.baseline)} if a.baseline else set()
+        except Exception:
+            inh = set()
+        storyline_check(sl, res, warns, inh)
         if a.paper_advisory:
             pres |= set(range(1, len(sl) + 1))
         if a.paper:

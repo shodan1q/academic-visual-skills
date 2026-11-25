@@ -11,12 +11,18 @@ SPEC = {"template": "template.pptx|.potx|starting_deck.pptx", "out": "/app/outpu
         "footer": "optional footer text", "date": "optional", "slide_numbers": true,
         "slides": [
           {"keep": 3, "replace": {"old text": "new text"}, "notes": "..."},     # reuse slide 3 of the input file
+          {"keep": 4, "set": {"title": "claim sentence", "body": ["point", "  sub-point"]},   # EDIT IN PLACE: only that shape's text changes;
+           "remove": ["shape name or text it contains"],                       # pictures, tables, positions, formatting of the slide stay
+           "image": "/app/work/fig3.png", "image_box": [x, y, w, h], "caption": "Fig. 3 ...",   # add a picture to the kept slide
+           "source_note": "Paper Sec. 2, p.2"},                                # set / add the slide's source line (nothing else moves)
+           # "set" keys: title | subtitle | body (text shape with most text) | source_note | placeholder idx | shape name | text the shape contains
           {"layout": "Title and Content" or 2, "title": "claim sentence", "subtitle": "...",
            "body": ["point", "  sub-point (2 leading spaces = level 2)", "**bold** words", "Al_{2}O_{3}, cm^{-1}"], "body2": ["right column"],
-           "font_size": 20, "image": "/app/work/fig2.png", "image_box": [x, y, w, h], "caption": "Fig. 2 ...",
+           "font_size": 20, "image": "/app/work/fig2.png" (or a picture already in the deck: "ppt/media/image3.png"), "image_box": [x, y, w, h], "caption": "Fig. 2 ...",
            "table": [["head", "head"], ["1.0", "2.0"]], "table_box": [x, y, w, h], "table_size": 14,
            "source_note": "Paper Sec. 3, Table 1, p.2",   # -> layout placeholder named Source/Note/Ref, else small textbox above footer
-           "ph": {"13": ["text for placeholder idx 13"]}, "notes": "speaker notes", "source": "ignored by build"}],
+           "ph": {"13": ["text for placeholder idx 13"]}, "notes": "speaker notes",
+           "from": 6}],                         # rebuilt slide replaces input slide 6 (used only for the before/after record)
         "min_pt": 18}                           # optional: WARN when body text would render below this size
 Main body goes to the LARGEST body/obj placeholder (not the first one); every build prints "placed slide N: what->ph ..." - check it.
 Boxes are inches. Input slides that are not kept are dropped; masters, layouts, theme and media are never rewritten.
@@ -124,8 +130,9 @@ def inspect(path, full=False):
         n = notes_of(z, s)
         print("   [notes] " + ((n if full else n[:160]).replace("\n", " / ") if n else "(none)"))
 
-def runs(text, sz=None):
-    """**bold**, H_{2}O subscript, cm^{-1} / Ce^{3+} superscript (the markup never reaches the slide text)."""
+def runs(text, sz=None, rpr=None):
+    """**bold**, H_{2}O subscript, cm^{-1} / Ce^{3+} superscript (the markup never reaches the slide text).
+    rpr = an existing <a:rPr> to reuse (in-place edits keep the slide's own run formatting)."""
     out, bold = [], False
     for g in re.split(r"(\*\*|_\{[^{}]*\}|\^\{[^{}]*\})", str(text)):
         if g == "**":
@@ -133,7 +140,12 @@ def runs(text, sz=None):
             continue
         base = ' baseline="-25000"' if g.startswith("_{") else ' baseline="30000"' if g.startswith("^{") else ""
         g = g[2:-1] if base else g
-        if g:
+        if g and rpr:
+            tag = re.sub(r' baseline="[^"]*"', "", rpr) if base else rpr
+            tag = re.sub(r"^<a:rPr\b", "<a:rPr" + base, tag) if base else tag
+            tag = re.sub(r"^<a:rPr\b", '<a:rPr b="1"', re.sub(r' b="[^"]*"', "", tag, 1)) if bold else tag
+            out.append("<a:r>%s<a:t>%s</a:t></a:r>" % (tag, escape(g)))
+        elif g:
             out.append('<a:r><a:rPr lang="zh-CN" altLang="en-US"%s%s%s dirty="0"/><a:t>%s</a:t></a:r>' % (' sz="%d"' % (sz * 100) if sz else "", ' b="1"' if bold else "", base, escape(g)))
     return "".join(out) or '<a:endParaRPr lang="zh-CN"/>'
 
@@ -181,6 +193,114 @@ def rep(xml, old, new):
         k = iter(range(10 ** 6))
         return re.sub(r"<a:t>[^<]*</a:t>", lambda t: "<a:t>%s</a:t>" % (escape(full.replace(old, new)) if next(k) == 0 else ""), p)
     return re.sub(r"<a:p(?=[ >]).*?</a:p>", fp, xml, flags=re.S), hit[0]
+
+SHAPE = r"<p:sp>.*?</p:sp>|<p:pic>.*?</p:pic>|<p:graphicFrame>.*?</p:graphicFrame>"
+_name = lambda b: unescape((re.findall(r'<p:cNvPr [^>]*?name="([^"]*)"', b) or [""])[0])
+_pht = lambda b: (lambda m: (re.findall(r'type="(\w+)"', m.group(1)) or ["obj"])[0] if m else None)(re.search(r"<p:ph\b([^>]*)", b))
+
+def pick_shape(x, key, text_only=True):
+    """Find ONE shape of a kept slide by role (title/subtitle/body/source_note), placeholder idx, shape name, or text it contains."""
+    ms = [m for m in re.finditer(SHAPE if not text_only else r"<p:sp>.*?</p:sp>", x, re.S) if not text_only or "<p:txBody>" in m.group(0)]
+    k, txt = str(key).strip(), lambda m: "\n".join(text_of(m.group(0)))
+    if k.lower() == "title":
+        c = [m for m in ms if _pht(m.group(0)) in ("title", "ctrTitle")]
+    elif k.lower() == "subtitle":
+        c = [m for m in ms if _pht(m.group(0)) == "subTitle"]
+    elif k.lower() in ("source_note", "source"):
+        c = [m for m in ms if NOTE.search(_name(m.group(0))) and _pht(m.group(0)) not in ("title", "ctrTitle")]
+    elif k.lower() == "body":
+        c = [m for m in ms if _pht(m.group(0)) not in ("title", "ctrTitle", "subTitle") + FOOT and not NOTE.search(_name(m.group(0)))]
+        c = sorted(c, key=lambda m: (_pht(m.group(0)) is None and len(txt(m)) < 40, -len(txt(m))))  # the shape that carries the slide's text
+    elif k.isdigit():
+        c = [m for m in ms if re.search(r'<p:ph\b[^>]*idx="%s"' % k, m.group(0))]
+    else:
+        c = [m for m in ms if _name(m.group(0)).lower() == k.lower()] or [m for m in ms if k in txt(m)]
+    return c[0] if c else None
+
+def set_text(x, key, items, n):
+    """In-place edit of a kept slide: replace the paragraphs of one shape, reusing its own paragraph/run formatting; all other shapes stay byte-identical."""
+    m = pick_shape(x, key)
+    if m is None:
+        print("WARN slide %d: set %r found no text shape (shapes: %s) -> use a listed name or a text fragment" % (n, key, [_name(b.group(0)) for b in re.finditer(SHAPE, x, re.S)][:8]))
+        return x
+    b = m.group(0)
+    tb = re.search(r"(<p:txBody>\s*(?:<a:bodyPr\b[^>]*?/>|<a:bodyPr\b[^>]*>.*?</a:bodyPr>)\s*(?:<a:lstStyle\s*/>|<a:lstStyle>.*?</a:lstStyle>)?)(.*)(</p:txBody>)", b, re.S)
+    if not tb:
+        print("WARN slide %d: set %r: shape %r has no editable text body" % (n, key, _name(b)))
+        return x
+    old = re.findall(r"<a:p(?=[ >]).*?</a:p>", tb.group(2), re.S)
+    first = lambda rx, p: (lambda r: r.group(0) if r else "")(re.search(rx, p, re.S))
+    tm = {}
+    for p in old:
+        if "<a:t>" in p:
+            lv = int((re.findall(r'<a:pPr\b[^>]*?lvl="(\d)"', p) or ["0"])[0])
+            tm.setdefault(lv, (first(r"<a:pPr\b[^>]*?/>|<a:pPr\b[^>]*>.*?</a:pPr>", p), first(r"<a:rPr\b[^>]*?/>|<a:rPr\b[^>]*>.*?</a:rPr>", p)))
+    out = []
+    for lv, t in items_of(items if isinstance(items, (list, tuple)) else str(items).split("\n")):
+        ppr, rpr = tm.get(lv) or tm.get(0) or (tm[min(tm)] if tm else ("", ""))
+        if lv not in tm:
+            ppr = re.sub(r' lvl="\d"', "", ppr)
+            ppr = (re.sub(r"^<a:pPr\b", '<a:pPr lvl="%d"' % lv, ppr) if ppr else '<a:pPr lvl="%d"/>' % lv) if lv else ppr
+        out.append("<a:p>%s%s</a:p>" % (ppr, runs(t, None, rpr or None)))
+    print("   set slide %d: %r -> shape %r: %d paragraph(s) -> %d (same shape, position and formatting; other shapes untouched)" % (n, key, _name(b), len([p for p in old if "<a:t>" in p]), len(out)))
+    return x[:m.start()] + b[:tb.start(2)] + "".join(out) + b[tb.end(2):] + x[m.end():]
+
+def drop_shape(x, key, n):
+    m = pick_shape(x, key, text_only=False)
+    if m is None or str(key).lower() in ("title", "body"):
+        print("WARN slide %d: remove %r matched no shape (give the shape name or a text fragment)" % (n, key))
+        return x
+    print("   removed from slide %d: shape %r" % (n, _name(m.group(0))))
+    return x[:m.start()] + x[m.end():]
+
+def add_picture(z, x, rx, s, n, cx, cy, ctx):
+    """Add a picture (+ caption) to a kept slide at image_box (inches); nothing else on the slide moves."""
+    try:
+        data = z[s["image"]] if s["image"] in z else open(s["image"], "rb").read()
+    except Exception as e:
+        print("WARN slide %d: image %r not readable (%s) -> picture not added" % (n, s["image"], e))
+        return x, rx
+    bx = [v * EMU for v in s.get("image_box") or [cx / EMU * 0.55, cy / EMU * 0.27, cx / EMU * 0.4, cy / EMU * 0.5]]
+    if not s.get("image_box"):
+        print("WARN slide %d: no image_box given for the added picture -> placed in the right half; check the preview for overlap" % n)
+    iw, ih = imgsize(data)
+    k, ext = min(bx[2] / iw, bx[3] / ih), os.path.splitext(s["image"])[1].lower().lstrip(".").replace("jpg", "jpeg") or "png"
+    mn = next("ppt/media/kit_s%d_%d.%s" % (n, j, ext) for j in range(999) if "ppt/media/kit_s%d_%d.%s" % (n, j, ext) not in z)
+    z[mn] = data
+    if 'Extension="%s"' % ext not in ctx[0]:
+        ctx[0] = ctx[0].replace("</Types>", '<Default Extension="%s" ContentType="image/%s"/></Types>' % (ext, ext))
+    rid = next("rIdKitImg%d" % j for j in range(999) if '"rIdKitImg%d"' % j not in rx)
+    rx = rx.replace("</Relationships>", relxml([(rid, "image", "../media/" + os.path.basename(mn))]) + "</Relationships>")
+    nid = max([int(v) for v in re.findall(r'<p:cNvPr id="(\d+)"', x)] or [1]) + 1
+    add = ('<p:pic><p:nvPicPr><p:cNvPr id="%d" name="Picture %d" descr="%s"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill>'
+           '<a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
+           % (nid, nid, q(os.path.basename(s["image"])), rid, xfrm([bx[0] + (bx[2] - iw * k) / 2, bx[1], iw * k, ih * k])))
+    if s.get("caption"):
+        add += ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="Caption"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>'
+                '<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:pPr algn="ctr"/>%s</a:p></p:txBody></p:sp>' % (nid + 1, xfrm([bx[0], bx[1] + ih * k, bx[2], 0.4 * EMU]), runs(s["caption"], s.get("caption_size", 14))))
+    print("   added to slide %d: picture %s at [%.2f, %.2f, %.2f, %.2f] in%s" % (n, os.path.basename(s["image"]), (bx[0] + (bx[2] - iw * k) / 2) / EMU, bx[1] / EMU, iw * k / EMU, ih * k / EMU, " + caption" if s.get("caption") else ""))
+    return x.replace("</p:spTree>", add + "</p:spTree>", 1), rx
+
+def add_source_note(z, x, rx, text, n, layouts, cx, cy):
+    """Source line on a kept slide: the slide's own source placeholder, else the layout's, else a small text box above the footer."""
+    if pick_shape(x, "source_note") is not None:
+        return set_text(x, "source_note", [text], n)
+    lp = re.search(r'Target="\.\./slideLayouts/([^"]+)"', rx)
+    lay = next((l for l in layouts if lp and os.path.basename(l["path"]) == lp.group(1)), None)
+    L = phs(rd(z, lay["path"])) if lay else []
+    nid = max([int(v) for v in re.findall(r'<p:cNvPr id="(\d+)"', x)] or [1]) + 1
+    p = next((p for p in L if p["type"] in ("body", "obj") and NOTE.search(p["name"])), None)
+    if p and not re.search(r'<p:ph\b[^>]*idx="%s"' % p["idx"], x):
+        add = ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph %s/></p:nvPr></p:nvSpPr><p:spPr/>'
+               '<p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>' % (nid, q(p["name"]), p["attrs"], paras([text])))
+        how = "layout placeholder %r" % p["name"]
+    else:
+        fy = min([geom(z, lay, f)[1] for f in L if f["type"] in FOOT and geom(z, lay, f)] or [cy - 0.5 * EMU])
+        add = ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="Source note"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>%s<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>'
+               '<p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p>%s</a:p></p:txBody></p:sp>' % (nid, xfrm([0.5 * EMU, fy - 0.36 * EMU, cx - EMU, 0.34 * EMU]), runs(text, 11)))
+        how = "small text box above the footer"
+    print("   added to slide %d: source note (%s); nothing else moved" % (n, how))
+    return x.replace("</p:spTree>", add + "</p:spTree>", 1)
 
 def relxml(items):
     return "".join('<Relationship Id="%s" Type="%s%s" Target="%s"/>' % (i, RT, t, g) for i, t, g in items)
@@ -259,7 +379,14 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
         b1 = big(0.15)
     g1, tbox = b1 and geom(z, lay, b1) or [0.5 * EMU, 1.5 * EMU, cx - EMU, cy - 2.3 * EMU], None
     if vis and not vbox:
-        vbox, tbox = ([g1[0] + g1[2] * 0.53, g1[1], g1[2] * 0.47, g1[3]], [g1[0], g1[1], g1[2] * 0.5, g1[3]]) if s.get("body") else (g1, None)
+        bi = items_of(s["body"]) if s.get("body") else []
+        if s.get("table") and not s.get("image") and bi and len(bi) <= 2 and sum(len(t) for _, t in bi) <= 170:
+            # a table plus one or two take-away lines: table at full width, the lines directly under it (no squeezed half-width table)
+            caph, bh = (0.4 * EMU if s.get("caption") else 0), (0.62 * len(bi) + 0.25) * EMU
+            th = caph + min((g1[3] - bh - caph) / len(s["table"]), 0.45 * EMU) * len(s["table"])
+            vbox, tbox = [g1[0], g1[1], g1[2], th], [g1[0], g1[1] + th + 0.2 * EMU, g1[2], g1[3] - th - 0.2 * EMU]
+        else:
+            vbox, tbox = ([g1[0] + g1[2] * 0.53, g1[1], g1[2] * 0.47, g1[3]], [g1[0], g1[1], g1[2] * 0.5, g1[3]]) if s.get("body") else (g1, None)
     if s.get("body"):
         sp(b1, "body", s["body"], tbox, s.get("font_size"))
     if s.get("body2"):
@@ -269,7 +396,9 @@ def new_slide(z, S, s, n, layouts, cx, cy, R, ctx):
         cap = 0.4 * EMU if s.get("caption") else 0
         h = (h * 0.58 if s.get("table") and s.get("image") else h) - cap
         if s.get("image"):
-            data = open(s["image"], "rb").read()
+            data = z[s["image"]] if s["image"] in z else open(s["image"], "rb").read()  # a file, or a picture already in the deck (ppt/media/...)
+            if not s.get("image_box") and not pic:
+                y, h = y + 0.08 * EMU, h - 0.08 * EMU  # breathing room under the title rule
             iw, ih = imgsize(data)
             k, ext = min(w / iw, h / ih), os.path.splitext(s["image"])[1].lower().lstrip(".").replace("jpg", "jpeg")
             mn, rid = next("ppt/media/kit_s%d_%d.%s" % (n, j, ext) for j in range(999) if "ppt/media/kit_s%d_%d.%s" % (n, j, ext) not in z), "rIdKitImg"  # never overwrite media of kept slides
@@ -336,6 +465,16 @@ def build(spec_path):
             for o, nw in (s.get("replace") or {}).items():
                 x, h = rep(x, o, nw)
                 print("WARN slide %d: replace text not found: %r" % (n, o[:60])) if not h else None
+            for key, items in (s.get("set") or {}).items():
+                x = set_text(x, key, items, n)
+            for key in ([s["remove"]] if isinstance(s.get("remove"), str) else s.get("remove") or []):
+                x = drop_shape(x, key, n)
+            if s.get("image"):
+                x, rx = add_picture(z, x, rx, s, n, cx, cy, ctx)
+            if s.get("source_note"):
+                x = add_source_note(z, x, rx, s["source_note"], n, layouts, cx, cy)
+            for bad in [k for k in ("title", "body", "table", "layout") if k in s]:
+                print("WARN slide %d: %r is ignored on a kept slide -> put it under \"set\": {%r: ...} (in-place edit) or drop \"keep\" to rebuild the slide" % (n, bad, bad))
             rx = re.sub(r'<Relationship [^>]*?/notesSlide"[^>]*/>', "", rx)
             lname, notes = "kept input slide %s" % s["keep"], oldn if notes is None else notes
         else:
