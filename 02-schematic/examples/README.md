@@ -1,91 +1,57 @@
-# 最小调用示例（示例 / synthetic，不是正式案例结果）
+# 最小调用示例（合成数据，仅示意接口；不是任何正式案例的结果）
 
-以下材料、数值与输出全部为说明接口而编写：一篇合成的 4 页“论文” PDF，内容按哈维弧菌群体感应的教科书知识改写，Figure 3 为矢量图（图中文字在 PDF 文本层）。
+输入（合成）：`/input/case.json`（`case_id` + `output_contract`）、`/input/artifacts/figure-workorder.json`（title、must_show、export{width_mm, png_dpi, min_font_pt, formats}、edit_request）、`/input/source/paper.pdf`、`/input/data/table1_steps.csv`（列 `step,name,stage`）。
 
-## 1. 示例输入
-case（示例）：
-```json
-{"case_id": "SIM02-QS-FIG3", "task": "Redraw Figure 3 of the source paper as an editable relationship schematic following the work order.",
- "workorder": "artifacts/figure-workorder.json",
- "materials": ["source/paper.pdf", "data/table1_autoinducers.csv", "artifacts/figure-workorder.json"],
- "output_contract": ["case_id", "status", "editable_source", "export_artifact", "content_map", "compliance_checks", "exceptions"]}
-```
-工单（示例，节选）：
-```json
-{"figure_id": "figure03", "workorder_type": "editable_relationship_schematic",
- "panels": ["3a low cell density (LCD): kinase mode", "3b high cell density (HCD): phosphatase mode"],
- "must_show": ["three autoinducer-receptor pairs with their synthases; autoinducers coloured by signal class from Table 1",
-               "compartments: receptors in the inner membrane, LuxP periplasmic, LuxU/LuxO/Hfq/LuxR cytoplasmic",
-               "phosphorelay direction receptor -> LuxU -> LuxO at LCD, reversed at HCD",
-               "untested feedback must not look like established regulation"],
- "export": {"formats": ["svg", "pdf", "png"], "width_mm": 180, "png_dpi": 600, "min_font_pt": 6},
- "edit_request": "rename the node 'Qrr1-5' to 'Qrr sRNAs (qrr1-5)' and recolour the inter-species signal class to #CC79A7; re-export and record the source-level diff."}
-```
-table1_autoinducers.csv（示例）：`autoinducer,synthase,receptor,signal_class,...` / `HAI-1,LuxM,LuxN,intra-species,...` / `AI-2,LuxS,LuxPQ,inter-species,...` / `CAI-1,CqsA,CqsS,intra-genus,...`
-
-## 2. 找图注和原图标签（示例输出，节选）
 ```bash
-pdftotext -layout /input/source/paper.pdf /app/work/src.txt
-# 本例 case.json 明说 “Figure 3 of the source paper”，且图注主题与工单 title 一致，才用图号；否则按工单关键词 grep 正文
-python3 $S/scripts/export_check.py figtext /app/work/src.txt 3
-# caption of figure 3: src.txt:L84-88 (page 3)
-#   L84 Figure 3. Quorum-sensing circuit of V. harveyi. (a) At LCD the receptors LuxN, LuxPQ and CqsS act as kinases; ...
-# short text on the same page, outside the caption (usually the labels drawn in the original figure; lines L46-79):
-#   HAI-1 | AI-2 | CAI-1 | a Low cell density (kinase) | b High cell density (phosphatase) | Inner membrane | LuxN | LuxPQ | CqsS |
-#   Cytoplasm | LuxU | P | sigma-54 | LuxO-P | LuxO | Qrr1-5 | Hfq | LuxR | qrr4 promoter | luxR mRNA | aphA mRNA | ...
-# lines citing figure 3: L27 L29 L34 L36
+python3 /skills/weekly-skill/scripts/run.py start        # 打印材料（带行号），写 partial result.json
+cat > /app/work/figure.txt <<'EOF_SPEC'
+title: Assay workflow and analysis package structure @1
+color: table1_steps.csv | name | stage | Stage (Table 1)
+group a: a  Workflow from tissue to clusters @19
+group b: b  Structure of the analysis package @33
+group pkg in b: Analysis package @33
+group qc in pkg: Quality control module @34
+group bc in pkg: Batch-correction module | dashed=planned, not implemented in this study @41
+node w1: 1 Nuclei isolation (5 mg tissue) | step | a | data=Nuclei isolation @20
+node w2: 2 Fixation (1% formaldehyde, 10 min) | step | a | data=Fixation @21
+node w3: 3 Sequencing (2 x 50 bp) | step | a | data=Sequencing @27
+node d1: Discarded nuclei | data | a @30
+node f1: TSS-enrichment filter (score >= 6) | process | qc @34
+node f2: Doublet filter (score < 0.3) | process | qc @35
+edge w1 -> w2 | step @21
+edge w2 -> w3 | step @27
+edge w3 -> d1 | flow | fail QC @30
+edge f1 -> f2 | step @34-35
+note: * Fixation: 10 min in Results (L21), 5 min in Methods (L52); the Results value is drawn. @21
+req: steps in order, numbered, with conditions | pass | w1,w2,w3 | L20-27
+req: steps coloured by stage from Table 1 | pass | legend-cat-wetlabpreparation | colours read from the table by the script
+req: planned module must not look implemented | pass | bc | dashed outline + footnote (L41)
+exc: contradiction | fixation 10 min (L21) vs 5 min (L52) | Results value drawn, footnote added
+edit w2 | label=2 Fixation (PFA)
+edit library construction | fill=#CC79A7
+summary: Two-panel schematic: 3-step workflow with discard branch; package with QC module (2 filters) and a planned module.
+EOF_SPEC
+python3 /skills/weekly-skill/scripts/run.py build /app/work/figure.txt
 ```
 
-## 3. 结构 spec 片段（示例；不写任何坐标）
-```json
-{"canvas": {"width_mm": 180, "min_font_pt": 6, "title": "Quorum-sensing circuit of V. harveyi",
-  "categories": {"csv": "/input/data/table1_autoinducers.csv", "key": "autoinducer", "column": "signal_class", "title": "Signal class (Table 1)"}},
- "panels": [{"id": "p-a", "title": "a  Low cell density: kinase mode", "src": "src.txt:L84"},
-            {"id": "a-out", "parent": "p-a", "title": "Outside (autoinducers low)", "src": "src.txt:L29"},
-            {"id": "a-mem", "parent": "p-a", "title": "Inner membrane", "fill": "#F2D7B6", "src": "src.txt:L27"},
-            {"id": "a-cyt", "parent": "p-a", "title": "Cytoplasm", "layout": "grid", "src": "src.txt:L27"},
-            {"id": "p-b", "title": "b  High cell density: phosphatase mode", "src": "src.txt:L86"}],
- "nodes": [{"id": "a-ai2", "label": "AI-2", "kind": "small_molecule", "comp": "a-out", "data": "AI-2", "src": "table1_autoinducers.csv:row3"},
-           {"id": "a-luxpq", "label": "LuxP·LuxQ", "kind": "protein", "comp": "a-mem", "src": "src.txt:L27"},
-           {"id": "a-luxu", "label": "LuxU", "kind": "protein", "comp": "a-cyt", "col": 1, "row": 0, "src": "src.txt:L29"},
-           {"id": "a-luxo", "label": "LuxO~P", "kind": "protein", "comp": "a-cyt", "col": 1, "row": 1, "src": "src.txt:L29"},
-           {"id": "a-qrr", "label": "Qrr1–5 sRNAs", "kind": "concept", "comp": "a-cyt", "col": 1, "row": 2, "src": "src.txt:L31; L93"}],
- "edges": [{"id": "a-e2", "from": "a-luxpq", "to": "a-luxu", "type": "phospho", "src": "src.txt:L29"},
-           {"id": "a-e4", "from": "a-luxu", "to": "a-luxo", "type": "phospho", "src": "src.txt:L29"},
-           {"id": "b-e7", "from": "b-luxR", "to": "b-qrr4", "type": "inhibit", "evidence": "hypothesis", "label": "ChIP only", "src": "src.txt:L38-39"}],
- "texts": [{"id": "t-note", "text": "* Qrr count: five in Abstract and Methods M3; Results R3 says four (unresolved).", "src": "src.txt:L9; L31; L93"}],
- "legend": {"title": "Legend"}}
+示意输出（节选，示例）：
+```
+   data colours: 3 node(s) coloured by stage from table1_steps.csv; 3 node(s) without a row stay white
+spec: 5 groups, 6 nodes, 4 edges, 3 requirement checks, 1 exceptions, 2 edit(s); width 180.0 mm, min font 7.0 pt, 300.0 dpi
+[0s] build figure.svg: ok (0s)
+   legend drawn automatically (5 items): material / sample flow; next step (order); wet-lab preparation; library construction; not listed in table1_steps.csv
+[3s] render figure.svg: ok (3s)
+   png_method=magick, pdf_method=soffice
+[6s] build figure_v2.svg (2 edit(s)): ok (0s)
+   diff: 61 ids kept, 57 unchanged; content changes on: legend-cat-libraryconstruction-glyph, w2-label, w3; 2 layout-only change(s) from the automatic re-flow
+   source trace: 24/24 src pointers resolved to verbatim quotes; 6/6 entity names occur in their cited lines
+   PASS: 7 contract field(s), status=complete, 0 fail / 0 warn
+DONE in 12s -> /app/output: edit_diff.json, export_log.jsonl, figure.pdf, figure.png, figure.svg, figure_content_map.json, figure_pixel_check.json, figure_source_map.md, figure_spec.json, figure_spec_lines.txt, figure_spec_v2.json, figure_v2.pdf, figure_v2.png, figure_v2.svg, figure_v2_pixel_check.json, result.json, source_text.txt
 ```
 
-## 4. 命令与输出（示例，本机 rsvg-convert）
-```bash
-python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec.json $OUT_DIR/figure.svg
-#  no warnings
-#  wrote ... (25 entities, 50 relations, 8 legend items; canvas 985x939 px = 180 mm wide, smallest text 12.5 px = 6.5 pt; all text scaled x1.04 ...)
-timeout 300 python3 $S/scripts/export_check.py render $OUT_DIR/figure.svg --dpi 600
-#  -> PNG 4252 x 4054 px (180 mm @ 600 dpi); PDF vector, 16 fonts, all embedded
-python3 $S/scripts/svgfig.py build $OUT_DIR/figure_spec_v2.json $OUT_DIR/figure_v2.svg   # 只改 a-qrr 的 label + categories.colors
-python3 $S/scripts/svgfig.py diff $OUT_DIR/figure.svg $OUT_DIR/figure_v2.svg > $OUT_DIR/edit_diff.json
-#  -> content_changes 4: a-qrr-label text; a-ai2 / b-ai2 / legend-cat-interspecies-glyph fill #E69F00 -> #CC79A7
-#     (另有 layout_only_changes：标签变长后自动重排的坐标)
-python3 $S/scripts/export_check.py check
-#  -> PASS: 7 contract field(s), status=partial, 0 fail / 0 warn
-```
-渲染结果（示例）：两个子图各含 “Outside / Inner membrane / Cytoplasm” 三个嵌套分区；受体在膜带内，磷酸转移为紫色箭头（图例 “phosphotransfer (~P)”），LuxR ⊣ qrr4 为点划线（hypothesis）；图例在图下方分两栏：关系类型 + “Signal class (Table 1)” 3 个色块；脚注在最下。
+result.json（示例结构）：`case_id`、`status`（一个词）、`status_reasons`、`editable_source{svg, spec, layers, how_to_edit}`、`export_artifact[{file, format, dpi, pixels, renderer, pdf_is_vector, pdf_fonts}]`、`content_map{entities[{id,label,kind,compartment,fill,data_value,src,quote,page,named_in_source}], relations[…], compartments[…], legend[…], data_encoding{file, sha256_16, categories[{label,color,n_rows}], nodes[…]}, export_geometry, source_trace}`、`compliance_checks[{requirement,result,element_ids,evidence}]`、`exceptions[{category,detail,handling}]`、`change_log[{version,request,outputs,svg_changes,kept_ids,unchanged_ids}]`、`versions`、`artifacts`、`caption`。contract 字段名不同（camelCase、中文、properties/required）时按含义对应填写，并在 `run_notes` 说明。
 
-## 5. result.json 节选（示例）
-```json
-{"case_id": "SIM02-QS-FIG3", "status": "partial",
- "status_reasons": ["Qrr count contradicts (five in Abstract/M3 vs four in R3); drawn as Qrr1-5 with footnote"],
- "editable_source": {"svg": "figure.svg", "spec": "figure_spec.json", "edited": ["figure_v2.svg", "figure_spec_v2.json"]},
- "content_map": {"file": "figure_content_map.json",
-   "relations": [{"id": "contains-a-luxpq", "from": "Inner membrane", "to": "LuxP·LuxQ", "type": "contains", "src": "src.txt:L27"},
-                 {"id": "b-e7", "from": "LuxR", "to": "qrr4", "type": "inhibit", "evidence": "hypothesis", "src": "src.txt:L38-39"}],
-   "export_geometry": {"canvas_px": [985, 939], "width_mm": 180, "min_font_pt": 6.5, "text_scale": 1.04}},
- "compliance_checks": [{"requirement": "compartments: receptors in the inner membrane, LuxP periplasmic, ...", "result": "pass",
-                        "element_ids": ["a-mem", "a-cyt", "a-luxpq"], "evidence": "nested panels; LuxP·LuxQ inside the membrane band"},
-                       {"requirement": "labels match the original Figure 3", "result": "partial",
-                        "element_ids": ["a-qrr"], "evidence": "all figtext labels drawn except 'AphA (LCD genes)' (not requested by the work order)"}],
- "exceptions": [{"category": "contradiction", "detail": "Abstract L9 / Methods L93: five Qrr; Results L31: four", "handling": "five + footnote quoting both"},
-                {"category": "undecidable", "detail": "LuxR feedback on qrr4 supported by ChIP only", "handling": "hypothesis line style + caption"}]}
-```
+常见情况：
+- 没有工单修改请求：不写 `edit` 行，脚本做一次标明“演示”的描边编辑并写入 change_log。
+- 没有数据表：不写 `color:` 行；手工底色配 `key: #56B4E9 | 含义`。
+- 只改现成 SVG 的一个标签：`svgfig.py edit in.svg out.svg <id>-label --text "新标签"`，再 `svgfig.py diff in.svg out.svg`。

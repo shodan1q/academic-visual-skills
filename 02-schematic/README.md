@@ -1,68 +1,54 @@
-# sci-schematic-editable-lite：科研关系示意图（精简版）
+# sci-schematic-editable-lite：科研示意图生成与编辑（精简版，lite-1.6）
 
 ## 用途
-把原始论文、figure 工单（如 `editable_relationship_schematic`）和数据表，变成一张**结构可逐条核对、排版不靠手填坐标**的科研示意图——包含/层级图、信号通路与分区、谱系/上下游图、实验流程图、因果机制链条——并能在源文件上按要求修改：
+把原始论文、figure 工单和数据表变成一张**每个元素都能回查原文**的示意图（实验流程图、结构/层级图、概念或机制链条图），并能在源文件上按要求修改。
 
-- **范围由工单定，原图标签作对照**：先按工单关键词定位正文；工单或图注主题确认对应论文的 Figure N 时，`export_check.py figtext src.txt N` 打印该图的图注、原图里画着的文字标签（矢量 PDF 的文本层）和所有引用行号；实体名照原图写，漏画的要说明。
-- **只写结构，脚本排版**：spec 里写“子图 → 分区（parent）→ 节点（comp）”和分区内的 col/row，`svgfig.py build` 自动定尺寸、嵌套、网格对齐、等宽分栏，图例放在图下方分栏，脚注排在最下，画布自动扩展，不会裁切。边穿过别的节点时先自动改 L 形折线，边标签自动避让节点和其他标签。
-- **包含是嵌套，不是箭头**：膜、胞质、周质这类分区画成框中框；脚本检查子组不出界、兄弟组不交叠、节点完全落在所属组内，并把每条包含关系写进 content_map（`type: contains`）。
-- **关系语义固定**：step / flow / produce（合成、表达）/ phospho（磷酸转移）/ signal / activate / inhibit / bind / line 各有固定线型与端点；证据强度（direct / indirect / hypothesis）是独立的线型维度，“未检验”的关系不会画成实线；图例文字可按边改写成材料里的说法。
-- **图例 = 数据表**：`canvas.categories` 直接读 CSV，每个类别一色、图例按表逐类列出（类别数 = 色块数）；改一个类别颜色，全图与图例同步。pixcheck 在渲染像素上核对每个节点颜色都有同色图例色块。
-- **期刊字号自动达标**：写 `canvas.width_mm` 与 `min_font_pt`，build 反复放大全部文字直到最小字号 ≥ 要求，并报告画布 px、mm、最小字号 pt 与放大倍数（写入 content_map 的 `export_geometry`）。
-- **修改留痕**：改 spec 另存 v2 重建，`svgfig.py diff` 把“内容改动”（文字、颜色，按 id 列出）和“自动重排的坐标变化”分开统计；换行不算内容改动。
-- 交付分层 SVG + JSON 规格 + 真实 PNG/PDF + 像素自检 + 内容映射 + 工单逐条对照（element_ids 由 check 核实存在）+ 源文件级修改 diff。
+- 图是“分组—实体—关系表”的渲染：包含关系用嵌套分区表达，并列用同行，流程/因果用带类型的箭头，推测用点划线或虚线框；作用类型（颜色+端点）与证据强度（线型）是两个独立维度。
+- 排版由脚本算：分区嵌套、子图并排或叠放、流程链（含带一个旁支的链）蛇形排、同组节点自动换位以减少连线交叉（编号步骤保持书写顺序）、边标签避让、图例和脚注放在图下，画布自动扩展；字号按工单宽度（mm）和最小 pt 自动调。
+- 分类颜色由脚本读 CSV 决定（一类一色，色盲友好），图例与数据表逐类一致；改类别色时图例和节点同步，撞色自动换开并记录。
+- 箭头、T 形端、圆点端都是普通多边形/线段，不用 SVG marker，任何渲染器（含只有 ImageMagick 的环境）都画得出方向。
+- 两条命令出全部交付物：分层 SVG + 规格 + 真实 PNG/PDF（工单要 TIFF/EPS/JPEG 时一并转出）+ 像素自检 + 内容映射与来源表（来源指针回填原文引句与页码）+ 工单逐条对照 + 修改 diff + result.json。
 
-不负责：统计分析与统计图数值计算、海报封面美化、艺术插画、正文写作。
+不负责：统计图表的数值计算、海报/封面美化、艺术插画、正文写作。
 
 ## 文件
 | 路径 | 作用 |
 |---|---|
-| `SKILL.md` | 运行时说明：9 步流程（目标 ≤ 25 次调用）、关系语法、图例与数据映射、自动排版 spec 示例、result.json 规则、异常处理 |
-| `scripts/svgfig.py` | `build` spec → 自动排版的分层 SVG + `*_content_map.json`（实体、关系含 contains、分区、图例、数据编码、导出几何），并告警：缺来源、子组出界、兄弟组交叠、节点不在所属组、step 与序号反向、边重叠/交叉/穿节点/穿图例、边标签被遮、标签溢出、图例缺项/多项、颜色无图例、类别颜色重复；`edit` 按 id 改源；`diff` 元素级改动（内容/布局分开） |
-| `scripts/export_check.py` | `tools` 探测渲染器与中文字体；`figtext` 找图注、原图标签与引用行；`render` SVG → PNG/PDF（rsvg-convert → cairosvg → inkscape → chrome（含 playwright 自带的 chromium）→ 矢量 PDF 栅格化（pdftoppm/fitz）→ magick → 内置 matplotlib 渲染 → soffice；PDF 最后兜底为标准库矢量 PDF）并写 export_log.jsonl；`check` 核对 result.json（contract 字段、status 一个词、骨架“生成中”/模板槽残留、对照表里的 element_ids 是否真实存在、预览是否真实） |
-| `scripts/pixcheck.py` | 纯标准库解码渲染后的 PNG：图不空、不裁切；节点填色按声明渲染、标签有可见墨迹与足够对比度；节点颜色在图例里有同色色块；图例色块灰度可分；每种边样式有图例线。只给提示 |
-| `resources/checklist.md` | 脚本查不到、需要对照原文人工确认的项 |
-| `examples/README.md` | 最小调用示例（示例，合成数据） |
-| `benchmark/EVALUATION.md` | 设计理由与内部合成案例上的前后对照记录（仅内部合成案例，不含正式评测结果） |
+| `SKILL.md` | 运行时说明：必做三步、规格写法、关系语法、状态与异常处理 |
+| `scripts/run.py` | `start`：一次读完输入（清单+sha256、case.json、工单、PDF→带行号文本、术语相关段落、数据表）并写如实的 partial 骨架；`build`：行式规格（或 JSON 规格）→ 出图 → 导出 → 像素自检 → 来源表 → 修改版 + diff → result.json，每步限时、失败不中断 |
+| `scripts/svgfig.py` | `build` JSON 规格 → 自动排版 → 分层 SVG + `*_content_map.json`；`edit` 改单个元素；`diff` 元素级改动记录（内容改动与重排坐标分开统计） |
+| `scripts/export_check.py` | `render` SVG → PNG/PDF（rsvg-convert → cairosvg → inkscape → chrome → magick → soffice → 内置渲染），写 `export_log.jsonl`；`assemble` 按任意 contract 字段名填满 result.json；`check` 自检；`skeleton`、`tools` |
+| `scripts/pixcheck.py` | 解码渲染后的 PNG（纯标准库）：图不空、节点填色按声明渲染、标签可见、箭头端点和分区标题真的在图里、每种节点颜色在图例里有色块。只给提示 |
+| `resources/checklist.md`、`examples/README.md`、`benchmark/EVALUATION.md` | 人工核对清单；最小调用示例（合成数据）；设计理由与内部执行记录 |
 
-## 依赖
-- Python 3.8+ 标准库即可。渲染器自动探测并按序回退；PDF 字体检查用 `pdffonts`（可选）；PDF 文本用 `pdftotext`（无则 fitz/pypdf）。
-- 字体栈：Arial/Helvetica + Noto Sans CJK SC / Source Han Sans SC / WenQuanYi Micro Hei / PingFang SC / Microsoft YaHei。
-- 都没有渲染器时保留 SVG、如实记录失败，不伪造预览。
+## 依赖与安装
+Python 3.8+ 标准库，无需安装。可选工具自动探测：`pdftotext`（无则 fitz / pypdf）、任一 SVG 渲染器（都没有时用内置渲染：有 matplotlib 出 PNG+PDF，否则只出标准库矢量 PDF 并如实记录缺 PNG）。字体：SVG 的 font-family 依次为 Arial / Helvetica / Noto Sans CJK SC / 思源黑体 / 文泉驿 / 系统无衬线，文字保持可选可改；环境缺中文字体时像素自检会提示标签不可见，改用英文标签或记为异常。
 
-## 调用方式
+## 调用
 ```bash
-export S=/skills/weekly-skill            # 本地测试时另设 CASE_JSON / WORK_DIR / OUT_DIR
-python3 $S/scripts/export_check.py tools
-pdftotext -layout /input/source/paper.pdf /app/work/src.txt
-python3 $S/scripts/export_check.py figtext /app/work/src.txt 3
-python3 $S/scripts/svgfig.py build /app/output/figure_spec.json /app/output/figure.svg
-timeout 300 python3 $S/scripts/export_check.py render /app/output/figure.svg --dpi 600
-python3 $S/scripts/pixcheck.py /app/output/figure.svg
-python3 $S/scripts/svgfig.py build /app/output/figure_spec_v2.json /app/output/figure_v2.svg   # 修改后的版本
-python3 $S/scripts/svgfig.py diff /app/output/figure.svg /app/output/figure_v2.svg > /app/output/edit_diff.json
-python3 $S/scripts/export_check.py check
+export S=/skills/weekly-skill        # 本地测试另设 CASE_JSON / WORK_DIR / OUT_DIR
+python3 $S/scripts/run.py start                      # 读材料
+python3 $S/scripts/run.py build /app/work/figure.txt # 规格 → 全部交付物（改规格后重跑同一条）
 ```
+单步命令（调试或接入别的流程时用）：`svgfig.py build spec.json figure.svg`、`export_check.py render figure.svg --dpi 300`、`pixcheck.py figure.svg`、`svgfig.py edit in.svg out.svg <id>-label --text "新标签"`、`svgfig.py diff a.svg b.svg`、`export_check.py assemble notes.json`（notes：status_reasons / compliance_checks / exceptions / edit_request）。
 
-## 输出（/app/output）
-`figure_spec.json`、`figure.svg`（layer-panels/edges/nodes/data/text/legend，每个元素有 id 与 data-src）、`figure.png`、`figure.pdf`、`figure_content_map.json`（实体、关系含 contains、分区、图例、数据编码含 CSV sha256、export_geometry）、`figure_pixel_check.json`、`export_log.jsonl`、`figure_spec_v2.json` + `figure_v2.*`、`edit_diff.json`、`figure_source_map.md`、`figure_caption.md`、`result.json`（case_id、status、editable_source、export_artifact、content_map、compliance_checks、exceptions、change_log 及其他 contract 字段）。
+## 规格
+行式规格见 SKILL.md 和 `examples/README.md`。JSON 规格（`run.py build x.json` 也接受，可带 `checks`、`exceptions`、`edits:[{"id":…,"label":…}]`）：`canvas{width_mm,min_font_pt,title,categories{csv,key,column,colors,title}}`、`panels[{id,title,parent,layout,cols,fill,dash,src}]`、`nodes[{id,label,kind,comp,shape,fill,data,aliases,dash,src}]`、`edges[{id,from,to,type,evidence,label,both,width,src}]`、`texts[{id,text,src}]`、`legend{title,items[{fill,label}]}`。坐标一律不写（写了的显式坐标 `cx,cy / x,y,w,h` 仍被 svgfig 接受，用于局部微调）。写法有出入会被归一：未知分组、重复 id、未定义节点的边、读不了的颜色表都只产生点名的 WARN，不会中断。
+
+导出参数：宽度 mm、PNG dpi（上限 600）、最小字号 pt 取自工单（缺省 180 mm / 300 dpi / 6 pt）；SVG/PDF 为真实物理宽度；PDF 是否矢量、字体是否嵌入、PNG 像素尺寸记在 result.json 的导出块里。
 
 ## 方法要点
-1. 图是“实体—关系表”的渲染：spec 里每个节点有 kind/comp/src，每条边有 type/evidence/src；content_map 由 spec 直接生成，不靠模型手抄。
-2. 模型只做科学判断（谁在哪个分区、什么关系、证据多强），几何由脚本算：自底向上按内容定尺寸，自顶向下分配位置，列等宽以便 a/b 子图逐格对齐。快速模型手填坐标时最常见的失败（为了避开重叠而删掉分区、图例被裁到画布外）因此不再出现。
-3. 包含、并列、顺序、因果四种结构各有唯一画法，并且都有对应的机器检查（嵌套几何、同组、序号方向、端点类型）。
-4. 颜色与图例从同一张 CSV 生成，修改时改类别颜色而不是逐个节点改，diff 证明内容改动只落在预期 id 上。
+1. 先交付再改进：`start` 就写出如实的 partial result.json；一次 `build` 后即为完整交付，之后只修被点名的事实性问题。
+2. content_map 直接由规格生成；`@行号` 指针由脚本解析成原文引句 + PDF 页码，并核对节点名是否出现在所引行（`source_trace`）。
+3. 修改从规格出发重建 `figure_v2`，`edit_diff.json` 把内容改动（文字、颜色）与自动重排引起的坐标变化分开，元素 id 保持不变。
+4. 状态由文件实际情况判定：缺导出格式、有未满足的工单项即 partial；已写明的矛盾与未决点作为 exceptions 如实交付。
 
 ## 限制
-- 自动排版是网格式的：节点放在分区的行列格里，连线是直线或单折线，不做正交布线；复杂交叉网络需要模型调整 col/row 或加 `via`。
-- 文字宽度按字符估算；pixcheck 对大图通过约 1200 px 的同源重渲染来检查。
-- `figtext` 只读得到矢量图里的文字；原图是位图时只能依据图注与正文，并如实说明。
-- 不判断科学结论是否成立，只保证与材料一致、证据强度可见。
-- CMYK、EPS、TIFF 依赖环境里的 inkscape/ImageMagick，缺失时记为缺口。
+- 自动排版是启发式的：> 25 个节点或跨分区长连线多时仍会有交叉和标签拥挤；可用 `cols=`、分组顺序或拆子图调整。
+- 文字宽度按字符估算；内置回退渲染只覆盖本 Skill 产生的 SVG 子集；没有任何渲染器且没有 matplotlib 时没有 PNG。
+- 不判断科学结论是否成立，只保证与材料一致、证据强度可见；读不到 PDF 里位图原图的内容。
+- start 的段落挑选按工单术语的匹配程度排序，可能漏掉用别名叙述的句子：用术语行号索引和 `sed -n` 补读。
+- CMYK 分色不支持（输出 sRGB），需要时在导出后用专业软件转换并记录。
 
 ## 维护
-版本 lite-1.5（2026-11）：未指定位置的一行节点自动排序（有关系的相邻、箭头左→右、与相邻分区的对应节点对齐）；步骤链自动蛇形换行（不再有斜着回到行首的长箭头）；边标签在全部连线确定后再放（不再盖住别的连线），长标签自动折行；绕行连线不与已有连线重叠；图例符号随字号放大；规格里漏写 id / legend、边缺 from/to 时不再报错（自动补上并提示）。
-
-版本 lite-1.4（2026-11）：箭头/T 形端/圆点端改为普通图形元素（不用 SVG marker，ImageMagick、LibreOffice 等渲染器也不丢方向）；分区标题改为纯文字加底框；渲染链加入 playwright chromium、PDF 栅格化与内置渲染兜底；pixcheck 核对箭头与标题是否真的出现在像素里；被挡住的边自动绕行；超过一页高给出提示；范围以工单为准（figure_id 不当作论文图号）。
-
-版本 lite-1.3（2026-11）：新增自动排版（结构 spec，无需坐标）、图例分栏与画布自动扩展、最小字号自动达标、`figtext` 原图标签提取、`phospho`/`produce` 边类型与按边图例文字、边自动折线与标签避让、diff 区分内容与布局。保留 1.2 的九步流程、骨架残留检测、只提示不阻断的 pixcheck。旧 spec（显式坐标）照常可用。改脚本后用 examples/README.md 的示例重跑 build → render → pixcheck → check。
+lite-1.6（2026-11）：新增 `run.py`（两条命令、行式规格、限时分步、先交付后改进）；箭头端点为普通图形；虚线框表示计划中/未验证的部件；同组节点换位减少连线交叉；改类别色自动避免撞色；按工单转出 TIFF/EPS/JPEG。历史见 `benchmark/EVALUATION.md`。
