@@ -4,14 +4,11 @@
                                auto layout (no cx/cy, or canvas.layout "auto") also writes out_resolved_spec.json
   edit in.svg out.svg ID [--text "new label"] [--set attr=value ...]   change one element, rest byte-identical
   diff old.svg new.svg      -> element-level change log (proof the edit kept the source)
-Spec: canvas{w,h,width_mm,min_font_pt,fs_scale,layout,title,src,colorscale{csv,key,value,breaks[],colors[],title,src}},
-panels[{id,title,in,membrane,fill,src (+x,y,w,h when not auto)}] listed top -> bottom, nodes[{id,label,kind,comp,data,mods,
-shape,fill,fs,bold,aliases,xref,rank,col,src (+cx,cy,w,h when not auto)}], edges[{id,from,to,type,evidence,label,feedback,
-via[[x,y]],elbow,width,both,src}], texts[{id,text,x,y,fs,w,src}], legend{x,y,title,items[{edge|fill|evidence,label}]}.
-Auto layout: panels stacked in the order given (panel "in": parent -> organelle box inside it; membranes/envelopes are thin
-bilayer bands, nodes on them span the band); rows inside a panel follow the causal order of the edges (feedback edges found
-automatically or marked "feedback": true); columns ordered to straighten chains; blocked/upward edges routed orthogonally
-through empty lanes between rows and columns; fonts scaled so the smallest text >= canvas.min_font_pt at width_mm.
+Spec: canvas{width_mm,min_font_pt,title,src,legend_at,colorscale{csv,key,value,breaks[],colors[],title}}, panels[{id,title,in,membrane,
+fill,src}] top -> bottom, nodes[{id,label,kind,comp,data,mods,shape,fill,stroke,dash,aliases,rank,col,src}], edges[{id,from,to,type,
+evidence,label,feedback,width,both,src}], texts[{id,text,src}], legend{title,items[{edge|fill|evidence,label}]}; explicit coordinates
+(cx,cy,w,h / panel x,y,w,h / via) switch auto layout off. Auto layout: rows follow the causal order of the edges, feedback edges
+return through outer lanes, fonts scaled so the smallest text >= canvas.min_font_pt at width_mm.
 kind: gene mrna protein complex family small_molecule ion cell process (sets the glyph; gene/mrna italic).
 type: activate inhibit bind modify transport indirect line (+ flow signal step).  evidence: direct|indirect|hypothesis.
 mods: ["P","Ub","Ac","Me"] -> state badges on the node."""
@@ -609,6 +606,8 @@ def layout(sp, F, where="right", stretch=0, fold=False):
             if thin(p):
                 p.update(x=round(x1, 1), y=round(m[0]["cy"] - 17 * F, 1), w=round(x2 - x1 + tw(p.get("title", ""), 12.5 * F, True) + 20, 1), h=round(34 * F, 1), title_right=True)
             else:
+                grow = max(0.0, tw(p.get("title", ""), 15 * F, True) + 24 - (x2 - x1)) / 2.0  # the box is at least as wide as its own title
+                x1, x2 = x1 - grow, x2 + grow
                 p.update(x=round(x1, 1), y=round(p["_y"], 1), w=round(x2 - x1, 1), h=round(p["_y2"] - p["_y"], 1))
         elif p.get("_y") is not None:
             p.update(x=PX, y=round(p["_y"], 1), w=round(right - PX, 1), h=round((p["_band"] if p.get("_band") else p["_y2"] - p["_y"]), 1))

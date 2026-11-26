@@ -16,9 +16,9 @@ WORDS = {"complete", "completed", "success", "partial", "failed", "incomplete", 
 BAD = re.compile(r"\bTODO\b|\bTBC\b|\bTBD\b|lorem|ipsum|待补充|占位|placeholder|XXX|\{\{|\}\}", re.I)
 TPL = re.compile(r"<[^<>\n\"]{0,60}[⺀-鿿…|][^<>\n\"]{0,60}>|\"…\"|pass\|partial\|fail|material_missing\|")  # unfilled template slots
 
-def run(args, t=120):
+def run(args, t=0):
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=t)
+        p = subprocess.run(args, capture_output=True, text=True, timeout=t or float(os.environ.get("EC_TOOL_T") or 120))
         return p.returncode == 0, p.stdout, (p.stderr or "")[-200:]
     except Exception as e:
         return False, "", str(e)[:200]
@@ -697,7 +697,7 @@ def assemble(a):
     rc = check([])
     return 1 if bad else rc
 
-SKILL_VER = "bio-pathway-figure-lite 1.6"
+SKILL_VER = "bio-pathway-figure-lite 1.7"
 CONSUMED = {"fields", "status", "status_reasons", "run_notes", "edit_request", "summary", "compliance_checks", "exceptions", "change_log", "caption"}
 
 def png_px(p):
@@ -707,6 +707,8 @@ def png_px(p):
     except Exception:
         return None
 
+GRKN = {"α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "κ": "kappa", "λ": "lambda", "μ": "mu", "ζ": "zeta", "θ": "theta", "ω": "omega", "σ": "sigma"}
+GRK = re.compile("[%s]" % "".join(GRKN))
 SRC = re.compile(r"([\w.\-/]+\.(?:txt|md|csv|tsv))\s*[:#]\s*L?(\d+)(?:\s*[-\u2013~]\s*L?(\d+))?")
 
 def trace(out, cm):
@@ -763,8 +765,8 @@ def trace(out, cm):
             stat["resolved"] += 1
             if kind == "entities" and not str(m.group(1)).endswith((".csv", ".tsv")):
                 names = [str(x.get("label") or "")] + [str(v) for v in (x.get("aliases") or [])]
-                keys = [k for k in sum(([n] + re.split(r"[\s/(),;]+", n) for n in names), []) if len(k) >= 3]
-                low = lambda t: re.sub(r"[\s\-]", "", t.lower())  # noqa: E731
+                keys = [k for k in sum(([n] + re.split(r"[\s/(),;]+", n) + [h for h in n.split("-") if len(h) >= 4] for n in names), []) if len(k) >= 3]
+                low = lambda t: re.sub(r"[\s\-'\u2032\u2019\u2010-\u2013]", "", GRK.sub(lambda g: GRKN[g.group(0)], t.lower()))  # noqa: E731
                 if not keys:
                     continue
                 stat["names_checked"] += 1

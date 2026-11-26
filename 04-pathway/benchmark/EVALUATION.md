@@ -2,136 +2,31 @@
 
 > 内部记录：只用作者自己编写的合成案例，由作者按 SKILL.md 扮演运行时智能体执行；不是平台正式案例，不含任何正式评测结果。
 
-## 1. 为什么是“说明为主 + 三个标准库脚本”
-- 运行环境是快速模型、64 次请求 / 900 秒、只保证 Python 标准库。重型流水线容易因依赖与超时整体失败，所以本包只有 SKILL.md 和 3 个标准库脚本，不安装任何东西。
-- 科学判断（这是基因还是蛋白、这句话是激活还是抑制、证据是否直接）留给模型，但必须写成 spec 里的结构化字段（`kind`、`comp`、`type`、`evidence`、`src`）；**一切能机械检查的都交给脚本**：图例生成、数据上色、区室归属、transport 语义、边重叠、像素渲染。
-- 流程按 20–30 次调用设计；内部合成案例实际用了约 10 次命令调用（下文第 3 节）。
+## 1. 为什么是“说明为主 + 标准库脚本”
+- 运行环境是快速模型、64 次请求 / 900 秒、只保证 Python 标准库。重型流水线容易因依赖与超时整体失败，所以本包只有 SKILL.md 和 4 个标准库脚本，不安装任何东西。
+- 科学判断（基因还是蛋白、激活还是抑制、证据是否直接）留给模型，但必须写成规格里的结构化字段；能机械检查的都交给脚本（图例、数据上色、区室归属、transport 语义、像素渲染、来源引句）。
+- lite-1.7 起流程是两条命令（`run.py start` / `run.py build`），见第 4 节；第 3 节是早期版本在同一合成输入上的对照，规则与检查沿用至今。
 
-## 2. 合成案例（SIM04-PATHWAY-01，示例）
-- 材料：一份合成“论文” PDF（8 段结果 + Figure 3 图注，小鼠 cGAS–STING–TBK1–IRF3 通路、STAT1→TRIM30a 负反馈、TBK1→NF-κB 并行支、PPM1A 间接抑制、STING 同义名 MITA/TMEM173、摘要与数据表对 Irf3 的矛盾）；9 行 log2FC 表；工单 `figure-workorder.json`（6 个必需区室、4 项必须表现、180 mm / 600 dpi / ≥ 6 pt、修改请求“TBK1 改为 TBK1 (p-S172)、IFNAR 改灰色”）。
-- 陷阱：修改请求里的 S172 位点原文没有；IFNAR、JAK1 在数据表里没有值；Irf3 文字说上调、数据是 −0.3。
+## 2. 合成案例
+合成“论文” PDF（小鼠 cGAS–STING 通路，含负反馈、并行分支、间接抑制、同义名、摘要与数据表矛盾）+ 9 行 log2FC 表 + 工单（6 个区室、修改请求）。
 
 ## 3. 同一输入的两次执行对照
-**A. 不带本版规则（相当于基础智能体或旧版 lite-1.0 的做法：手写布局、手挑颜色、只查版式）**，第一稿的问题，全部来自实际产出的 SVG/PNG：
-| # | 问题 | 读者会怎么判 |
+**A. 不带本包规则时第一稿的问题**（来自实际产出的 SVG/PNG）：膜画成无标题色带，区室缺失；转录和分泌被画成 transport 虚线；原文明说“仅过表达、应视为间接”的抑制画成实线；颜色手工分档、无数据节点在图例里没有对应项；result.json 只有骨架文字时旧检查也给通过。
+
+**B. 按规则执行后**：build 无告警；PDF 矢量、字体嵌入；pixcheck 18 个节点填色、标签、图例同色全部通过；content_map 18 个实体、19 条关系（含 evidence）；修改 diff 只含 3 处真实改动（132 个 id 保留）；exceptions 分类记录 contradiction / user_request_not_in_source / undecidable。拦截机制：无标题区室、transport 连了不同实体、同一对节点两条边重合、线穿节点或图例、节点颜色无图例色块、result.json 残留骨架文字、工单对照引用了不存在的元素 id——都由 build / pixcheck / check 逐条点名。
+
+## 4. 版本记录（内部合成案例）
+- 1.2：运行预算内的稳健性（任意 contract 写法、缺文件不报错、渲染回退链、检查只提示不拦截）。
+- 1.3：模型不再算坐标，布局由脚本完成。 1.4：端点改为普通多边形（不依赖 SVG marker）。 1.5：写法容错与版面比例。
+- 1.6：连线横平竖直；线宽与图元随字号缩放；来源指针回填原文引句与页码。
+- **1.7：两条命令的流程。** 动机：旧流程要求模型依次读清单、定位段落、写 JSON 规格、构建、导出、看像素、复制规格做修改、写 notes、组装、自检，按说明逐步执行至少 14 次命令，完整的 result.json 只在最后一步出现；预算紧时容易停在半成品。
+
+| 同一合成输入（胰岛素–mTORC1，23 实体 / 24 关系，含修改请求） | 1.6 逐步流程 | 1.7 `start` + `build` |
 |---|---|---|
-| 1 | 质膜、ER 膜画成无标题的色带 | 工单要求的 6 个区室有 2 个没出现在图上 |
-| 2 | IRF3 → *Ifnb1*、IRF3 → *Cxcl10*、*Ifnb1* → IFN-β 都画成 transport 虚线 | “转运”被用来表示转录和分泌，语义错 |
-| 3 | PPM1A ⊣ TBK1 画成实线 | 原文明说“仅过表达、应视为间接”，而 indirect 类型只有箭头，没法表示“间接抑制” |
-| 4 | STING–TBK1 的“结合”和“+P S365 磷酸化”两条边重合 | 两个关系看起来只有一条 |
-| 5 | 分泌边横穿 *Cxcl10* 节点和图例 | 图例被线切开 |
-| 6 | 颜色按 log2FC 手工分档；无数据的 IFNAR/JAK1/NF-κB 为白色但图例没有“无数据”项；图例无标题和单位 | 图例与图面不自洽 |
-| 7 | 深红节点上黑字 | 对比度低 |
-| 8 | 只把 result.json 骨架写成“生成中”时，旧检查脚本也给 PASS | 预算耗尽时会交出空结果却自认为通过 |
-| 9 | 修改后 TBK1 标签变长、IFNAR 变灰，但灰色在图例里没有含义 | 修改破坏了图例一致性，无人发现 |
+| 到完整交付物（SVG+PNG+PDF+修改版+result.json）所需命令数 | 14（按说明最少）；常见 18–24 | 2；补读原文或改一次规格时 3–4 |
+| 模型需要写出的文件内容 | 规格 JSON 7.9 KB + notes.json 5.5 KB + 修改脚本 | 一份行式规格 4.5 KB |
+| 脚本运行时间（ImageMagick + LibreOffice 渲染，300 dpi） | 各步合计约 15 s | start 0.1 s，build 13–15 s |
+| 完整 result.json 首次出现 | 最后一步 | build 的第 7 秒（修改版之前就已组装一次） |
+| 图面 | 同一布局与绘图代码 | 同左 |
 
-**B. 按本版 SKILL.md 执行**：读工单与源（2 次）→ spec + build（1 次，0 告警）→ render 600 dpi + pixcheck（1 次）→ spec_v2 + build + diff + render + pixcheck（2 次，第一次被 pixcheck 拦下第 9 条）→ 画布加宽修图例越界（1 次）→ 模板组装 result.json + check（1–2 次）。结果：
-- build 无告警；PNG 4252 × 3254 px（180 mm @ 600 dpi），PDF 矢量、16 个字体嵌入；pixcheck 18 个节点填色、标签、图例同色全部通过；check PASS，0 fail / 0 warn。
-- content_map 18 个实体（含 kind、区室、aliases、数据值）、19 条关系（含 evidence）；data_encoding 记录 CSV sha256 与每个节点的值/分档/颜色。
-- diff：132 个 id 保留，改动只有 TBK1 标签、IFNAR 填色、新增的灰色图例项。
-- exceptions 三条分类记录：contradiction（Irf3）、user_request_not_in_source（S172）、undecidable（IFN-β 蛋白借用转录本数值）；status = partial 并逐条给原因。
-
-## 4. 每条规则拦住的是哪个问题（同一输入上实测）
-| A 表中的问题 | 拦截机制 | 实测输出（节选） |
-|---|---|---|
-| 1 区室无名 | build：无标题 panel 告警；窄带标题自动画在带内 | `panel p-pm has no title` |
-| 2 transport 误用 | build：transport 两端必须是同一实体 | `transport joins different entities (IRF3 -> Ifnb1)` |
-| 3 间接抑制 | spec：`evidence` 与 `type` 正交（红色点线 T 端），图例自动加“indirect evidence” | 图例新增 `legend-ev-indirect` |
-| 4 边重合 | build：同一节点对两条直线边告警 | `edges e5 and e17 draw over each other` |
-| 5 穿节点/穿图例 | build：线段与节点、图例框求交 | `edge e8 crosses the legend box` |
-| 6 数据色与图例 | `canvas.colorscale` 读 CSV 自动分档上色、自动图例（含“no value in …”）；pixcheck 比对节点与图例的渲染颜色 | `node n-ifnar colour #BABABA has no legend swatch` |
-| 7 对比度 | 深色填充自动白字；pixcheck 计算标签/填充对比度 | `label contrast` 字段写入 pixel_check.json |
-| 8 假通过 | check：contract 字段残留“生成中”、`<…>` 模板槽、工单对照里不存在的 element_id 都判 FAIL | `requirement … cites element id … not in any output SVG` |
-| 9 修改破坏图例 | 改 spec 重建 + pixcheck；自加图例项排在最后、id 按内容命名，diff 不被重排污染 | diff 只含 3 处真实改动 |
-
-## 5. 仍做不到的
-- 不自动排版：坐标由模型给出，脚本只检查（区室、重叠、穿越、越界）。
-- “这句话到底是激活还是抑制”“证据算不算直接”仍是模型判断；脚本只保证判断被显式记录、被一致地画出。
-- 纯文本模型看不到 PDF 中原图的像素，只能依据图注与正文；这一点会写进 exceptions。
-- pixcheck 对超过约 260 万像素的导出图通过同源 1200 px 重渲染来检查，不逐像素解码原图。
-
-## 6. 1.2 调整：运行预算内的稳健性（2026-11）
-同一套 1.1 设计用到字段名不同、工具更少的环境时，会在“收尾”上耗掉预算。按四个假设用合成案例复现（SYN04-TEST-C：TLR4–NF-κB 通路，contract 写成 `deliverables: [{field: caseId}, {field: outcome, allowed: [done, partial, failed]}, diagramSource, previewFiles, elementProvenance, qcResults, knownProblems, editHistory, 图注]`）：
-
-| 假设 | 1.1 上的复现 | 1.2 的处理 |
-|---|---|---|
-| H1 组装只填固定字段名 | 组装模板只写 editable_source / export_artifact / content_map / compliance_checks / exceptions，这 9 个 contract 字段都会残留“生成中”或缺失，check 判 FAIL；骨架要模型自己解析字段对象列表 | `export_check.py skeleton` 认所有 contract 写法；`assemble` 按含义映射（caseId→case_id、outcome→状态词、diagramSource→editable_source、previewFiles→export_artifact、elementProvenance→content_map、qcResults→compliance_checks、knownProblems→exceptions、editHistory→change_log、图注→caption），认不出的填运行摘要并记 run_notes |
-| H2 可选文件缺失时组装崩溃 | 无渲染器时 v2 pixcheck 退出 1 且不写 `figure_pixel_check.json` → 模板 `FileNotFoundError`；`edit_diff.json` 也是无条件读取 | assemble 每个输入都可缺；notes.json 坏了明确报 FAIL |
-| H3 不可满足的外观检查导致循环 | SKILL 要求“build WARN 全部改到消失”、“pixcheck FAIL → 重建”；版面类 WARN（如图例略超出画布）不一定能在几轮内消掉；check 把模板槽、不存在的 element_id 判 FAIL | build WARN 最多再改两轮，剩下的由 assemble 自动记入 exceptions；pixcheck 只给提示、退出码 0；模板槽与 element_id 降为 WARN（与 02 的 1.2 一致） |
-| H4 渲染器缺失 | PATH 中无渲染器：render 不出 PNG/PDF，pixcheck FAIL，check 报“无预览”FAIL（不可满足） | render 末端加内置渲染：有 matplotlib 出 PNG+PDF，否则出标准库矢量 PDF（Helvetica/Symbol，希腊字母可显示）；pixcheck 读不了 PNG 写 `skipped`；渲染确实失败过的 SVG 不再判 FAIL |
-
-保留不变：实体/关系/区室规则、CSV 分档上色与自动图例、content map、源级修改 + diff、工单逐条对照、分类异常。
-
-自测（作者按 SKILL.md 执行，合成案例，非正式案例）：
-- 本机有 rsvg-convert：PNG 2126 px（180 mm @ 300 dpi）+ 矢量 PDF（15 个字体嵌入）；pixcheck 9 个节点无提示；assemble → `PASS: 9 contract field(s), status=partial, 0 fail / 0 warn`，build 剩下的“图例超出画布”自动进 knownProblems。
-- 本机 PATH 中无任何渲染器、无 matplotlib：render 出标准库矢量 PDF，pixcheck 跳过，assemble PASS，exceptions 记缺 PNG 与跳过的像素检查。
-- gpu 服务器（matplotlib，无 rsvg/cairosvg/magick）：render 用内置 matplotlib 出 PNG+PDF，pixcheck 在 1200 px 重渲染上检查 9 个节点无提示，assemble PASS。
-- 内置渲染与 rsvg 渲染目视对照：区室、膜带、节点、斜体基因名、箭头/T 端/圆点端、虚线 transport、图例都在原位。
-
-
-## 7. 1.3 调整：模型不再算坐标（2026-11）
-**问题来源（同一输入对照）**：合成案例 SIM04-R2-TGFB（人肺成纤维细胞 TGF-β1 通路：配体—两种受体跨膜、SMAD2/3 磷酸化与 SMAD4 成复合物入核、4 个靶基因、SMAD7–SMURF2 负反馈、TRAF6–TAK1–p38 并行支、SARA 间接、SMAD7 抑制核复合物为假设；Table S2 着色；工单 183 mm / 600 dpi / ≥ 6 pt，修改请求：改配体标签 + 并行支分组色）。作者按 1.2 的 SKILL.md 扮演运行时智能体，手写坐标一次成稿：
-| # | 1.2 产物上看到的问题 | 脚本是否发现 |
-|---|---|---|
-| 1 | 画布 1250 px 宽、导出 183 mm：边标签和图例 12 px 只有 **5.0 pt**，低于工单 6 pt | 否（只在 SKILL 里给了换算公式，靠模型自己算） |
-| 2 | “+Ub → degradation”“+P S465/467”标签压在别的边上；“expression”标签离自己的边很远、挨着 p38 的边，读者会配错 | 否（只查标签压节点） |
-| 3 | p38 → *ACTA2* 与 SMAD7 表达边在核内交叉、“enhances”压在转录边上；TGFBR2 → TGFBR1 的磷酸化边画成 V 形折线 | 否 |
-| 4 | 数据中间档 #F7F7F7 与“无数据”白色肉眼不可分，图例两项看起来一样 | 否 |
-| 5 | 所有实体都是同一种矩形，基因/蛋白/复合物只靠斜体区分；膜只是色带 | — |
-| 6 | 修改版若在原 spec 上改标签并重排，diff 会混入大量坐标变化 | — |
-build 只报 1 条 WARN，pixcheck PASS——即检查全过而图有可见缺陷。快速模型手写 17 个节点的坐标时，这类问题只会更多。
-
-**1.3 的处理**：spec 不写坐标，`svgfig.py build` 自动布局（区室约束分层 → 重心 + PAV 列序 → 让开直通链 → 正交通道布线、反馈走外侧 → 标签逐段试放），按 `width_mm`/`min_font_pt` 选字号与图例位置；加脂双层/核膜/基因启动子/复合物八角框/修饰角标图元与图例；新增 WARN：分档色近白、字号低于工单、标签压边；输出 `*_resolved_spec.json` 供修改。
-
-**同一输入、按 1.3 SKILL.md 重跑**（命令调用约 8 次：读任务、骨架、读源、spec+build、render+pixcheck、v2+diff+render、notes+assemble）：
-- build 0 WARN，最小字号 6.3 pt（183 mm），8 处边交叉；PNG 4323 px 宽（600 dpi），PDF 矢量、字体全嵌入；pixcheck 17 节点通过。
-- 反馈环（SMAD7 → SMURF2 ⊣ TGFBR1）从右侧外通道返回，SMAD7/SMURF2 自动落在胞质底部；并行支 TRAF6–TAK1–p38 自成一列；受体跨在脂双层上。
-- 修改：从 resolved spec 复制改 3 处，`edit_diff.json` 149 个 id 保留，9 条改动全部是请求内容（标签、3 个填色、新图例项）。
-- assemble：`PASS: 7 contract field(s), status=partial, 0 fail / 0 warn`。
-另用旧 cGAS–STING 案例（含 ER、Golgi 子区室）去掉全部坐标重建：0 WARN、6.0 pt、8 处交叉，ER 膜画成胞质内的脂双层小带、Golgi 为子框；无渲染器时标准库 PDF 与 matplotlib 回退渲染均正确画出新图元。
-
-**仍有的局限**：布局是启发式，复杂图仍有交叉与绕线；resolved spec 固定了节点宽度，修改版长标签会换行；排版提示（`col`/`rank`/`feedback`）需要模型看了 WARN 后自己加。
-
-## 8. 1.4 调整：端点图形与版面（2026-11）
-同一份合成材料（胰岛素/氨基酸 → 溶酶体 mTORC1 → FOXO1/TFEB，24 实体、26 关系、5 区室，174 mm、最小 6 pt；示例，非正式案例）用同一份 spec 分别跑 1.3 与 1.4，环境只有 ImageMagick + LibreOffice（没有 rsvg/inkscape）：
-
-| 项目 | 1.3 | 1.4 |
-|---|---|---|
-| PNG 里的箭头/T 端/圆点端 | 全部缺失（ImageMagick 不画 SVG marker），激活与抑制只剩颜色区别 | 全部画出（端点是 polygon/line/circle） |
-| 最小字号（174 mm） | 4.4 pt，低于工单 6 pt | 7.3 pt |
-| 细胞器（溶酶体）位置 | 排在上游 AKT 之前，AKT ⊣ TSC 绕一大圈 | 按因果顺序排在 AKT 之后，主链自上而下 |
-| 汇入同一节点的多条线 | 挤在同一点 | 沿节点上/下边分开落点 |
-| build 版面 WARN | 4 条 | 2 条 |
-| 长标题 | 把画布撑宽，右侧留白 | 自动换行 |
-
-限制：行数多的通路（> 10 行）在窄栏宽下图会偏高（上例 174 × 285 mm），需要时把次要分支合并或把宽度设为双栏。
-
-## 1.5 调整：版面比例与写法容错（2026-11，内部合成案例）
-两份内部合成材料（胰岛素–mTORC1 多区室通路 24 节点 / 26 条边；DNA 损伤–p53–线粒体凋亡长链 21 节点 / 22 条边），同一份 spec 分别用 1.4 与 1.5 构建，全部只用 ImageMagick 渲染后目视比较：
-
-| 观察项 | 1.4 | 1.5 |
-|---|---|---|
-| 多区室通路，174 mm 宽时的图高 | 284 mm（超过一页），图例占图高约 30% | 233 mm；图例分三组横排 |
-| 长链通路，180 mm 宽时的图高 | 721 mm（高宽比 4.0，缩到一屏后文字不可读） | 254 mm（高宽比 1.41）；不分叉的步骤横排 |
-| 边标签 | 白色底块压在灰色区室上；三条同名 “transcription” 互相遮挡 | 底色取所在区室；同源同名只写一次 |
-| 图例里的蛋白 / 复合物 / 小分子图元 | 都接近椭圆，难以区分 | 圆角框 / 切角框 / 椭圆，与图面一致 |
-| 写法有出入的 spec（`source/target`、`compartment`、`"type":"phosphorylation"`、缺 id、边指向不存在的节点） | `KeyError` 回溯，无图 | 归一后出图，逐条 WARN |
-| 无未决工单项、仅有已记录的科学保留时的 status | partial | complete（缺导出或工单项未过仍为 partial） |
-
-仍然存在：边多的图（> 20 条）交叉仍然不少；横排后相邻两行之间会出现斜线（1.6 已改为直角折线）；修改版标签变长时在原节点宽度内换行。
-
-## 1.6 调整：直角连线、随字号缩放的线宽与图元、来源引句回填（2026-11，内部合成案例）
-同上两份合成材料，外加一次由小模型按 SKILL.md 独立完成的全流程（14 次调用，23 节点 / 24 条边）。同一份 spec 分别用 1.5 与 1.6 构建，只用 ImageMagick 渲染后目视比较：
-
-| 观察项 | 1.5 | 1.6 |
-|---|---|---|
-| 跨行跨列的连线 | 斜线，长链横排后出现回折的长斜线 | 直角折线；同一来源的分叉共用一条横线；长链图边交叉 2 → 0 |
-| 字号放大倍数 2.8 时（174 mm 宽）的线宽 | 节点边框约 0.28 pt、连线约 0.57 pt（接近发丝线） | 约 0.55 pt / 0.9 pt |
-| 同上，复合物切角、蛋白圆角、基因启动子箭头、磷脂头 | 固定像素，缩小后复合物与蛋白难以区分，磷脂头成细点（SVG 51 KB） | 随字号放大，图面与图例图元一致（SVG 46 KB） |
-| 同一行相邻节点间的边标签（“dephosph.”） | 被两侧节点遮住 | 列距按标签宽度拉开，完整可读 |
-| 白字深蓝底节点的对比度提示 | 误报 2.5:1（未做 gamma 校正），并把像素检查行记成 partial | 5.9:1，无提示；纯提示项不改变检查行结果 |
-| 来源可复核性 | `src.txt:L28`，但 src.txt 留在工作目录，交付物里看不到原句 | 52/52 个指针回填原文引句 + 页码，`source_text.txt` 随交付；21/23 个节点名出现在所引行，另 2 个被点名“行号偏了一行” |
-| 材料版本 | 仅当 /input 存在时记录 sha256 | 按 case.json 所在目录收集 |
-
-仍然存在：细胞器标题可能与从上方进入的连线相邻；很短的竖直连线上标签放不下时仍会给出版面提示；引句按行截取，句子可能从半句开始。
-
+另在一份 610 行的合成长论文（无修改请求、工单键名不同、规格里故意写了 `receptor complex`、`phosphorylation`、一个不存在的节点）上运行：start 输出 9 KB，build 13 s，认不出的行逐条点名，未中断；没有外部渲染器和 PDF 工具时 build 仍写出 SVG + 矢量 PDF + result.json，状态如实为 partial（缺 PNG）。
