@@ -113,6 +113,18 @@ TF = 1.0  # text scale, raised by build until the smallest text meets canvas.min
 def autolayout(sp, warn):
     """Fill in missing geometry. Panels without x/y and nodes without cx/cy are placed by their container's layout:
     row | col | grid (child col,row, or row-major with cols). Containers size to their content, then stretch to fill."""
+    for key, pre in (("panels", "panel"), ("nodes", "node"), ("edges", "edge")):  # tolerate items written without an id
+        for k, o in enumerate(sp.get(key) or []):
+            if isinstance(o, dict) and not o.get("id"):
+                o["id"] = "%s-%d" % (pre, k + 1)
+                warn.append("NOTE %s #%d had no id; named %s" % (pre, k + 1, o["id"]))
+    bad = [e for e in sp.get("edges") or [] if not (isinstance(e, dict) and e.get("from") and e.get("to"))]
+    if bad:
+        warn.append("%d edge(s) without from/to were left out: %s" % (len(bad), ", ".join(str((e or {}).get("id") if isinstance(e, dict) else e) for e in bad)))
+        sp["edges"] = [e for e in sp["edges"] if e not in bad]
+    if sp.get("edges") and not isinstance(sp.get("legend"), dict):  # a relationship figure always carries a legend
+        sp["legend"] = {"title": "Legend"}
+        warn.append("NOTE no legend in the spec: one was added below the figure (edge types, line styles, colours in use)")
     cv, PT, nodes = sp.setdefault("canvas", {}), {p["id"]: p for p in sp.get("panels", [])}, sp.get("nodes", [])
     has = lambda o, ks: all(k in o for k in ks)  # noqa: E731
     free = lambda n: "cx" not in n and not ("col" in n and "grid" in cv)  # noqa: E731
@@ -124,7 +136,7 @@ def autolayout(sp, warn):
         if free(n):
             fs = float(n.get("fs", 14)) * TF
             if "w" not in n:
-                n["w"] = int(min(140 * TF ** 0.5, max(84, max([tw(l, fs, n.get("bold")) for l in str(n.get("label", "")).split("\n")] or [0]) + 28)))
+                n["w"] = int(min(168 * TF ** 0.5, max(84, max([tw(l, fs, n.get("bold")) for l in str(n.get("label", "")).split("\n")] or [0]) + 28)))
             n.setdefault("h", int(max(42, len(wrap(n.get("label", ""), n["w"] - 12, fs)) * fs * 1.2 + 18)))
             kids.setdefault(n.get("comp") if n.get("comp") in PT else "", []).append((n.get("order", 1000 + k), "n", n))
     lg = sp.get("legend")
@@ -132,6 +144,10 @@ def autolayout(sp, warn):
         lg["_auto"] = True
     if not kids:
         return
+    try:
+        tidy(sp, kids, PT, cv)
+    except Exception as ex:  # ordering is a nicety: never let it stop a build
+        warn.append("NOTE auto-ordering skipped (%s)" % ex)
     def depth(i, d=0):
         return d if PT[i].get("parent") not in PT or d > 9 else depth(PT[i]["parent"], d + 1)
     for i, p in PT.items():
@@ -147,17 +163,19 @@ def autolayout(sp, warn):
                                           else "col" if all(t == "p" for t, _ in ks) and len(ks) > 1 else "row" if len(ks) <= cv.get("_maxrow", 4) else "grid")
         lay = "grid" if lay == "row" and any("row" in x and "col" in x for _, x in ks) else lay  # explicit col,row always win
         nc = int((c or {}).get("cols") or (-(-len(ks) // -(-len(ks) // cv["_maxrow"])) if cv.get("_maxrow") else max(1, int(len(ks) ** 0.5 + 0.999))))
-        cell = [(0, k) if lay == "col" else (x.get("col", k % nc), x.get("row", k // nc)) if lay == "grid" else (k, 0) for k, (_, x) in enumerate(ks)]
+        snake = lay == "grid" and bool((c or {}).get("_snake") if c is not None else cv.get("_snake_root"))  # a chain: odd rows run right to left
+        cell = [(0, k) if lay == "col" else (x.get("col", (nc - 1 - k % nc) if snake and (k // nc) % 2 else k % nc), x.get("row", k // nc)) if lay == "grid" else (k, 0) for k, (_, x) in enumerate(ks)]
         sz = [size(x["id"]) if t == "p" else (x["w"], x["h"]) for t, x in ks]
         gx = (c or cv).get("gap", cv.get("gap", 40))
         mine = {x.get("id") for t, x in ks if t == "n"}  # room for the labels of edges that run between neighbours in this container
         lab = [tw(str(e["label"]), 12 * TF) for e in sp.get("edges", []) if e.get("label") and e.get("from") in mine and e.get("to") in mine]
-        gx = max(gx, min(max(lab), 90 * TF) + 14) if lab and "gap" not in (c or {}) else gx
+        gx = max(gx, min(max(lab), 96 * TF) + 14) if lab and "gap" not in (c or {}) else gx
         gy = (c or cv).get("vgap", cv.get("vgap", gx - 2))
+        gy = max(gy, 35 * TF) if lab and "vgap" not in (c or {}) else gy  # a labelled vertical connector needs room for its label
         cw, rh = {}, {}
         for (a_, b_), (w, h) in zip(cell, sz):
             cw[a_], rh[b_] = max(cw.get(a_, 0), w), max(rh.get(b_, 0), h)
-        pad = 14 if c else 0
+        pad = int(12 + 4 * max(1.0, TF) ** 0.7) if c else 0
         iw = sum(cw.values()) + gx * max(0, len(cw) - 1)
         ih = sum(rh.values()) + gy * max(0, len(rh) - 1)
         w = max(iw + 2 * pad, min(tw(str(c.get("title", "")), float(c.get("fs", 17)) * TF, True) + 2 * pad + 10, 230 * TF) if c else 0, 100 if c else 0)
@@ -202,6 +220,58 @@ def autolayout(sp, warn):
         top = M_ + (44 * TF if cv.get("title") else 0)
         cv["w"] = int(max(cv.get("w", 0), w + 2 * M_, tw(str(cv.get("title", "")), cv.get("title_fs", 22) * TF, True) + 2 * M_) + 0.999)
         place("", M_, top, cv["w"] - 2 * M_, h)
+
+def tidy(sp, kids, PT, cv):
+    """Reading-order clean-up for containers whose nodes carry no col/row/order (the author left the arrangement to us):
+    - a row of <= 6 nodes is re-ordered so that linked nodes sit next to each other, arrows run left to right and a node
+      sits under/over its partner in the neighbouring compartment (fewer diagonals, no connector over a third node);
+    - a longer chain (1 -> 2 -> ... -> n) is marked so the grid is filled as a serpentine: the turn to the next row is a
+      short vertical arrow instead of a long diagonal back to the left."""
+    import itertools
+    ed = [(e["from"], e["to"]) for e in sp.get("edges", []) if isinstance(e.get("from"), str) and isinstance(e.get("to"), str)]
+    link = {frozenset(x) for x in ed}
+    mr = cv.get("_maxrow", 4)
+    box = {}
+    for i, ks in kids.items():
+        ks.sort(key=lambda z: z[0])
+        c = PT.get(i) or {}
+        if not ks or any(t != "n" or "order" in x or "col" in x or "row" in x for _, t, x in ks) or c.get("cols"):
+            continue
+        box[i] = [x for _, _, x in ks]
+    def xpos():
+        out = {}
+        for i, ks in kids.items():
+            ns = [x for _, t, x in ks if t == "n"]
+            m = len(ns)
+            row = (PT.get(i) or {}).get("layout", "row" if m <= mr else "grid") == "row"
+            nc = m if row else max(1, int(m ** 0.5 + 0.999))
+            for k, x in enumerate(ns):
+                out[x["id"]] = (x.get("col", k % nc) + 0.5) / float(max(nc, x.get("col", 0) + 1))
+        return out
+    for _ in range(2):
+        for i, ns in box.items():
+            m, lay = len(ns), (PT.get(i) or {}).get("layout")
+            ids = [x["id"] for x in ns]
+            if not (2 < m <= 6 and (lay == "row" or (lay is None and m <= mr))):
+                continue
+            xp = xpos()
+            intra = [(a, b) for a, b in ed if a in ids and b in ids]
+            cross = [(a, b) if a in ids else (b, a) for a, b in ed if (a in ids) != (b in ids) and a in xp and b in xp]
+            if not intra and not cross:
+                continue
+            def cost(perm):
+                at = {ids[j]: k for k, j in enumerate(perm)}
+                c = sum(30 * (abs(at[a] - at[b]) - 1) + (6 if at[b] < at[a] else 0) for a, b in intra)
+                c += sum(4 * m * abs((at[a] + 0.5) / m - xp[b]) for a, b in cross)
+                return c + 0.01 * sum(abs(k - j) for k, j in enumerate(perm))
+            best = min(itertools.permutations(range(m)), key=cost)
+            if cost(best) < cost(tuple(range(m))) - 0.5:
+                box[i] = ns = [ns[j] for j in best]
+                kids[i] = [(k, "n", x) for k, x in enumerate(ns)]
+    for i, ns in box.items():
+        c = PT.get(i)
+        if len(ns) > mr and (c or {}).get("layout") in (None, "grid") and all(frozenset((a["id"], b["id"])) in link for a, b in zip(ns, ns[1:])):
+            (c if c is not None else cv)["_snake" if c is not None else "_snake_root"] = True
 
 def build(a):
     """Build. With canvas.width_mm set, fit the figure to the page: try the sub-figure arrangement (side by side / stacked) and
@@ -248,7 +318,7 @@ def build(a):
 
 def _build(sp, a, emit):
     out = a[1]
-    cv, warn, N, P, FS = sp.get("canvas", {}), [], {}, {}, [12.0 * TF]
+    cv, warn, N, P, FS, TBOX = sp.get("canvas", {}), [], {}, {}, [12.0 * TF], []
     autolayout(sp, warn)
     cv = sp["canvas"]
     W, H, g = cv.get("w") or 0, cv.get("h", 0), cv.get("grid", {})
@@ -269,6 +339,7 @@ def _build(sp, a, emit):
             ty = p["y"] + (p["h"] / 2.0 + pf * 0.36 if thin else pf + 7 * TF)  # plain text on a small backing box: readable in every renderer, lines never run through it
             L["text"].append('<rect id="%s-titlebg" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s"/>' % (p["id"], p["x"] + 6, ty - pf, max(tw(l, pf, True) for l in tl) + 10, pf * (1.3 + 1.2 * (len(tl) - 1)), p.get("fill", "#F2D7B6" if thin else "#F7F7F7")))
             L["text"].append(txt(p["id"] + "-title", p["x"] + 10, ty, tl, pf, {"bold": 1}, s, "start"))
+            TBOX.append((p["id"], (p["x"] + 6, ty - pf, p["x"] + 16 + max(tw(l, pf, True) for l in tl), ty + pf * (0.3 + 1.2 * (len(tl) - 1)))))
         else:
             warn.append("panel %s has no title: every group / compartment / sub-figure must be named on the figure" % p["id"])
     PT = {p["id"]: p for p in sp.get("panels", [])}
@@ -353,7 +424,7 @@ def _build(sp, a, emit):
         L["nodes"].append(txt(n["id"] + "-label", n["cx"], n["cy"] - (len(lines) - 1) * fs * 0.6 + fs * 0.35, lines, fs, o, s))
         cm["entities"].append({"id": n["id"], "label": n.get("label", ""), "kind": kd, "compartment": n.get("comp", ""), "italic": n["italic"],
                                "fill": fill, "data_value": dv, "aliases": n.get("aliases", []), "xref": n.get("xref", ""), "src": s})
-    lg, used, segs, seen, LB, ELAB_, LBOX, HD, head_ = sp.get("legend"), [], [], {}, [], dict(ELAB), [], [], arrow_head
+    lg, used, segs, seen, LB, ELAB_, LBOX, HD, head_, PEND = sp.get("legend"), [], [], {}, [], dict(ELAB), [], [], arrow_head, []
     PN = {i: {"cx": (b[0] + b[2]) / 2.0, "cy": (b[1] + b[3]) / 2.0, "w": b[2] - b[0], "h": b[3] - b[1], "label": PT[i].get("title", i)} for i, b in P.items()}
     num = lambda n: re.match(r"\s*(\d+)[\s.)]", str((n or {}).get("label", "")) + " ")  # noqa: E731
     for e in sp.get("edges", []):
@@ -380,14 +451,25 @@ def _build(sp, a, emit):
         hit = lambda ps: [k for k, n in N.items() if all(n is not x for x in ends) and any(abs(x1 + (x2 - x1) * f / 20.0 - n["cx"]) < n["w"] / 2.0 - 3 and  # noqa: E731
                                                                                      abs(y1 + (y2 - y1) * f / 20.0 - n["cy"]) < n["h"] / 2.0 - 3 for (x1, y1), (x2, y2) in zip(ps, ps[1:]) for f in range(1, 20))]
         el = e.get("elbow")
+        def busy(ps):  # would run along (on top of) a connector that is already drawn
+            for (x1, y1), (x2, y2) in zip(ps, ps[1:]):
+                for s_ in segs:
+                    if abs(y1 - y2) < 2 and abs(s_[2] - s_[4]) < 2 and abs(y1 - s_[2]) < 7 and min(max(x1, x2), max(s_[1], s_[3])) - max(min(x1, x2), min(s_[1], s_[3])) > 8:
+                        return True
+                    if abs(x1 - x2) < 2 and abs(s_[1] - s_[3]) < 2 and abs(x1 - s_[1]) < 7 and min(max(y1, y2), max(s_[2], s_[4])) - max(min(y1, y2), min(s_[2], s_[4])) > 8:
+                        return True
+            return False
+        ell = lambda k: [pts[0], (pts[1][0], pts[0][1]) if k == "hv" else (pts[0][0], pts[1][1]), pts[1]]  # noqa: E731
         if not (e.get("via") or el) and hit(pts) and all(ends):  # auto-route: try an L-shaped connector that misses the other nodes
-            el = next((k for k in ("vh", "hv") if not hit([pts[0], (pts[1][0], pts[0][1]) if k == "hv" else (pts[0][0], pts[1][1]), pts[1]])), None)
+            el = next((k for k in ("vh", "hv") if not hit(ell(k)) and not busy(ell(k))), None)
         dt = []
         if not (e.get("via") or el) and hit(pts) and all(ends):  # still blocked: step out sideways (or above/below) and come back in
             (x0, y0), (x1, y1) = pts
-            ox, oy = max(ends[0]["w"], ends[1]["w"]) / 2.0 + 18, max(ends[0]["h"], ends[1]["h"]) / 2.0 + 14
-            cand = [[(x0 + k * ox, y0), (x0 + k * ox, y1)] for k in (1, -1)] + [[(x0, y0 + k * oy), (x1, y0 + k * oy)] for k in (1, -1)] + [[((x0 + x1) / 2.0, y0), ((x0 + x1) / 2.0, y1)], [(x0, (y0 + y1) / 2.0), (x1, (y0 + y1) / 2.0)]]
-            dt = next((c for c in cand if not hit([pts[0]] + c + [pts[1]])), [])
+            hk = max(1.0, TF) ** 0.7
+            ox, oy = max(ends[0]["w"], ends[1]["w"]) / 2.0 + 18, max(ends[0]["h"], ends[1]["h"]) / 2.0 + 13 * hk
+            cand = ([[(x0 + k * ox, y0), (x0 + k * ox, y1)] for k in (1, -1)] if abs(y0 - y1) > 2 else []) + ([[(x0, y0 + k * oy), (x1, y0 + k * oy)] for k in (-1, 1)] if abs(x0 - x1) > 2 else []) + [[((x0 + x1) / 2.0, y0), ((x0 + x1) / 2.0, y1)], [(x0, (y0 + y1) / 2.0), (x1, (y0 + y1) / 2.0)]]
+            ok = [c for c in cand if not hit([pts[0]] + c + [pts[1]])]
+            dt = next((c for c in ok if not busy([pts[0]] + c + [pts[1]])), ok[0] if ok else [])
         pts[1:1] = [tuple(v) for v in e.get("via", [])] or dt or ([(pts[1][0], pts[0][1]) if el == "hv" else (pts[0][0], pts[1][1])] if el else [])
         warn += ["edge %s: via point %s lies inside node %s (move it outside)" % (e.get("id"), v, k) for v in e.get("via", []) for k, n in N.items() if abs(v[0] - n["cx"]) < n["w"] / 2.0 and abs(v[1] - n["cy"]) < n["h"] / 2.0]
         pts[0] = clip(ends[0], *pts[1]) if ends[0] else pts[0]
@@ -409,22 +491,35 @@ def _build(sp, a, emit):
         lab = lambda i: (ends[i] or {}).get("label", str(e[("from", "to")[i]]))  # noqa: E731
         cm["relations"].append({"id": e["id"], "from": lab(0), "to": lab(1), "type": t, "evidence": ev, "label": e.get("label", ""), "src": s})
         if e.get("label"):
+            PEND.append((e, pts, col, s))
+    for e, pts, col, s in PEND:  # labels are placed once every connector is known, so a label never blanks out another line
+        if True:
             fl = 12 * TF
-            lw, k0 = tw(e["label"], fl), len(pts) // 2
-            def lpos(k, f, side):
+            lw0, k0 = tw(e["label"], fl), len(pts) // 2
+            def lpos(k, f, side, wr=True):
                 mx, my = pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * f, pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * f
-                vert = abs(pts[k][1] - pts[k - 1][1]) > abs(pts[k][0] - pts[k - 1][0])
-                lx, ly, anc = ((mx + 7, my + 4, "start") if side else (mx - 7, my + 4, "end")) if vert else (mx, my - 7 if side else my + fl + 6, "middle")
+                dx_, dy_ = abs(pts[k][0] - pts[k - 1][0]), abs(pts[k][1] - pts[k - 1][1])
+                vert = dy_ > dx_
+                ls = [e["label"]]
+                if wr and lw0 > 60 * TF and (vert or lw0 > dx_ - 10):  # a long label on a short connector: two or three short lines
+                    ls = wrap(e["label"], max(lw0 * 0.56, 50 * TF) if vert else max(dx_ - 10, lw0 * 0.4, 50 * TF), fl)[:3]
+                lw, lh = max(tw(l, fl) for l in ls), (len(ls) - 1) * fl * 1.2
+                off = 7 + (min(lw / 2.0, fl * 0.5 * dx_ / max(dy_, 1.0)) if vert else min(fl, lw / 2.0 * dy_ / max(dx_, 1.0)))  # clear a slanted line
+                lx, ly, anc = ((mx + off, my + 4 - lh / 2.0, "start") if side else (mx - off, my + 4 - lh / 2.0, "end")) if vert else (mx, my - off - lh if side else my + fl + off - 1, "middle")
                 bx = lx - 2 - (0 if anc == "start" else lw if anc == "end" else lw / 2)
-                bad = [j for j, n in N.items() if bx < n["cx"] + n["w"] / 2.0 and bx + lw + 4 > n["cx"] - n["w"] / 2.0 and ly - fl - 1 < n["cy"] + n["h"] / 2.0 and ly + 3 > n["cy"] - n["h"] / 2.0]
-                bad += ["label of " + o for o, b in LBOX if bx < b[2] and bx + lw + 4 > b[0] and ly - fl - 1 < b[3] and ly + 3 > b[1]]
-                return lx, ly, anc, bx, bad
-            cands = [lpos(k, f, sd) for k in sorted(range(1, len(pts)), key=lambda j: abs(j - k0)) for f in (0.5, 0.35, 0.65) for sd in (1, 0)]
-            lx, ly, anc, bx, bad = next((c for c in cands if not c[4]), cands[0])
-            warn += ["label of edge %s (%r) is hidden under %s: shorten it or move nodes" % (e["id"], e["label"], b) for b in bad]
-            LBOX.append((e["id"], (bx, ly - fl - 1, bx + lw + 4, ly + 3)))
-            LB.append('<rect id="%s-labelbg" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#FFFFFF" opacity="0.85"/>' % (e["id"], bx, ly - fl - 1, lw + 4, fl + 4))
-            LB.append(txt(e["id"] + "-label", lx, ly, [e["label"]], fl, e, s, anc, col))
+                b = (bx, ly - fl - 1, bx + lw + 4, ly + 3 + lh)
+                bad = [j for j, n in N.items() if b[0] < n["cx"] + n["w"] / 2.0 and b[2] > n["cx"] - n["w"] / 2.0 and b[1] < n["cy"] + n["h"] / 2.0 and b[3] > n["cy"] - n["h"] / 2.0]
+                bad += ["label of " + o for o, c in LBOX if b[0] < c[2] and b[2] > c[0] and b[1] < c[3] and b[3] > c[1]]
+                bad += ["title of " + j for j, c in TBOX if b[0] < c[2] and b[2] > c[0] and b[1] < c[3] and b[3] > c[1]]
+                soft = sorted({g_[0] for g_ in segs if g_[0] != e["id"] and any(inside(g_[1] + (g_[3] - g_[1]) * f_ / 24.0, g_[2] + (g_[4] - g_[2]) * f_ / 24.0, b, -1) for f_ in range(25))})
+                soft += ["border"] * sum(1 for c in P.values() if (b[0] < c[0] < b[2] or b[0] < c[2] < b[2]) and b[1] < c[3] and b[3] > c[1])
+                return lx, ly, anc, b, bad, soft, ls
+            cands = [lpos(k, f, sd, wr) for wr in ((False, True) if lw0 > 60 * TF else (False,)) for k in sorted(range(1, len(pts)), key=lambda j: abs(j - k0)) for f in (0.5, 0.35, 0.65, 0.22, 0.78) for sd in (1, 0)]
+            lx, ly, anc, b, bad, soft, ls = min(cands, key=lambda c: 100 * len(c[4]) + 10 * len(c[5]))
+            warn += ["label of edge %s (%r) is hidden under %s: shorten it or move nodes" % (e["id"], e["label"], x) for x in bad]
+            LBOX.append((e["id"], b))
+            LB.append('<rect id="%s-labelbg" x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#FFFFFF" opacity="0.85"/>' % (e["id"], b[0], b[1], b[2] - b[0], b[3] - b[1] + 1))
+            LB.append(txt(e["id"] + "-label", lx, ly, ls, fl, e, s, anc, col))
     cr = lambda a, b: all(((b[1] - a[1]) * (b[4] - a[2]) - (b[2] - a[2]) * (b[3] - a[1])) * ((b[1] - a[3]) * (b[4] - a[4]) - (b[2] - a[4]) * (b[3] - a[3])) < 0 for a, b in ((a, b), (b, a)))  # noqa: E731
     warn += ["edges %s and %s cross each other: move nodes or add via so connector lines do not cross" % pr for pr in sorted({(a[0], b[0]) for i, a in enumerate(segs) for b in segs[i + 1:] if a[0] != b[0] and not (a[5] & b[5]) and cr(a, b)})]
     L["edges"] += LB + HD  # labels after all lines, heads last: direction is never hidden under a line or a label box
@@ -434,7 +529,7 @@ def _build(sp, a, emit):
     if lg:
         given = {(("edge", it["edge"]) if it.get("edge") else ("evidence", it["evidence"]) if it.get("evidence") else ("fill", it.get("fill", "").upper())): it for it in lg.get("items", [])}
         have, uk = set(given), [u for u in EDGE if ("edge", u) in used] + [u for u in EVID if ("evidence", u) in used]
-        items = [given.get((k, v)) or {k: v, "label": ELAB_.get(v, v) if k == "edge" else v + " evidence"} for k in ("edge", "evidence") for v in uk if (k, v) in used]
+        items = [given.get((k, v)) or {k: v, "label": ELAB_.get(v, v) if k == "edge" else {"hypothesis": "proposed, not tested (line style)", "indirect": "indirect evidence (line style)"}.get(v, v)} for k in ("edge", "evidence") for v in uk if (k, v) in used]
         warn += ["legend lists %s %s that is not used in the figure" % h for h in have if h[0] != "fill" and h not in set(used)]
         warn += ["fill %s used on nodes but has no legend item (say what it encodes)" % f for f in fills if ("fill", f.upper()) not in have]
         nblk = len(items)
@@ -443,8 +538,9 @@ def _build(sp, a, emit):
         items += [it for h, it in given.items() if h[0] == "fill"]  # own fill items last: adding one later keeps earlier ids stable
         if lg.get("_auto"):
             lg["x"], lg["y"] = M_, bot + 16
-        fl, rh_ = 12 * TF, 21 * TF
-        colw = 44 + max([tw(str(it.get("label", it.get("head", ""))), fl, bool(it.get("head"))) for it in items] or [0]) + 30
+        fl, rh_, gk = 12 * TF, 21 * TF, max(1.0, TF) ** 0.7
+        GL = 36 * gk
+        colw = GL + 8 + max([tw(str(it.get("label", it.get("head", ""))), fl, bool(it.get("head"))) for it in items] or [0]) + 30
         ncol = int(lg.get("cols") or (max(1, min(len(items), int((max(W, rgt + M_) - lg["x"] - M_ + 30) // colw))) if lg.get("_auto") else 1))
         blocks = [items[:nblk], items[nblk:]] if enc and nblk else [items]
         per = max(-(-len(items) // ncol), max(len(b) for b in blocks) if ncol >= len(blocks) else 0)
@@ -466,12 +562,12 @@ def _build(sp, a, emit):
             if it.get("edge") or it.get("evidence"):
                 dash, head, col = EDGE[it["edge"]] if it.get("edge") else (EVID[it["evidence"]], "none", "#555555")
                 col = it.get("color", col)
-                gh, ge = head_(i + "-glyph-head", head, col, (x, y + 6 * TF), (x + 36, y + 6 * TF)) if head != "none" else ("", (x + 36, y + 6 * TF))
-                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%.1f" y2="%s" stroke="%s" stroke-width="2"%s/>%s' % (i, x, y + 6 * TF, ge[0], y + 6 * TF, col,
+                gh, ge = head_(i + "-glyph-head", head, col, (x, y + 6 * TF), (x + GL, y + 6 * TF)) if head != "none" else ("", (x + GL, y + 6 * TF))
+                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%.1f" y2="%s" stroke="%s" stroke-width="%.1f"%s/>%s' % (i, x, y + 6 * TF, ge[0], y + 6 * TF, col, 2 * max(1.0, TF) ** 0.5,
                                    ' stroke-dasharray="%s"' % dash if dash else "", gh))
             else:
-                L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="30" height="%.1f" fill="%s" stroke="#555555"/>' % (i, x, y, 13 * TF, it["fill"]))
-            L["legend"].append(txt(i, x + 44, y + 11 * TF, [it["label"]], fl, {}, it.get("src", "legend"), "start"))
+                L["legend"].append('<rect id="%s-glyph" x="%s" y="%s" width="%.1f" height="%.1f" fill="%s" stroke="#555555"/>' % (i, x, y, GL - 6, 13 * TF, it["fill"]))
+            L["legend"].append(txt(i, x + GL + 8, y + 11 * TF, [it["label"]], fl, {}, it.get("src", "legend"), "start"))
             cm["legend"].append(it)
         nc_ = (max(slots) // per + 1) if slots else 1
         lb = (lg["x"] - 4, lg["y"] - 4, lg["x"] + (nc_ - 1) * colw + colw - 26, y0 + min(per, max(slots or [0]) + 1) * rh_ + 2)

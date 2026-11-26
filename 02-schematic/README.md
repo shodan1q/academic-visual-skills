@@ -61,6 +61,8 @@ python3 $S/scripts/export_check.py check
 - CMYK、EPS、TIFF 依赖环境里的 inkscape/ImageMagick，缺失时记为缺口。
 
 ## 维护
+版本 lite-1.5（2026-11）：未指定位置的一行节点自动排序（有关系的相邻、箭头左→右、与相邻分区的对应节点对齐）；步骤链自动蛇形换行（不再有斜着回到行首的长箭头）；边标签在全部连线确定后再放（不再盖住别的连线），长标签自动折行；绕行连线不与已有连线重叠；图例符号随字号放大；规格里漏写 id / legend、边缺 from/to 时不再报错（自动补上并提示）。
+
 版本 lite-1.4（2026-11）：箭头/T 形端/圆点端改为普通图形元素（不用 SVG marker，ImageMagick、LibreOffice 等渲染器也不丢方向）；分区标题改为纯文字加底框；渲染链加入 playwright chromium、PDF 栅格化与内置渲染兜底；pixcheck 核对箭头与标题是否真的出现在像素里；被挡住的边自动绕行；超过一页高给出提示；范围以工单为准（figure_id 不当作论文图号）。
 
 版本 lite-1.3（2026-11）：新增自动排版（结构 spec，无需坐标）、图例分栏与画布自动扩展、最小字号自动达标、`figtext` 原图标签提取、`phospho`/`produce` 边类型与按边图例文字、边自动折线与标签避让、diff 区分内容与布局。保留 1.2 的九步流程、骨架残留检测、只提示不阻断的 pixcheck。旧 spec（显式坐标）照常可用。改脚本后用 examples/README.md 的示例重跑 build → render → pixcheck → check。

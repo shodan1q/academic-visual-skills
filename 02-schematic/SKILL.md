@@ -40,7 +40,7 @@ description: 把来源材料（原始论文 PDF、figure 工单 workorder JSON�
 - 不出现材料中没有的实体、基因名、浓度、时间点、数值或单位；数值与单位原样照抄并在 src 指明位置。
 
 ## 图例与数据映射
-- 一个分类 = 一种颜色，类别数 = 图例色块数；类别名与数据表原文一致；用到的每种边类型、证据线型自动进图例（写 `"legend":{"title":"Legend"}` 即可，不写坐标）。
+- 一个分类 = 一种颜色，类别数 = 图例色块数；类别名与数据表原文一致；用到的每种边类型、证据线型自动进图例（写 `"legend":{"title":"Legend"}` 即可，不写坐标；漏写时脚本也会自动补上）。
 - 分类着色来自 CSV：`"canvas":{"categories":{"csv":"/input/data/x.csv","key":"<行名列>","column":"<类别列>","colors":{"<类别>":"#009E73"},"title":"<类别名 (表名)>"}}`，节点写 `"data":"<key 列的值>"`；脚本按表逐类出色和图例，记进 content_map。可选 `"show":"<数值列>","fmt":"n = {}"` 把表中数值原样追加到标签。没有数据着色就不用。
 - 颜色用色盲友好的 Okabe–Ito：#0072B2 #E69F00 #009E73 #CC79A7 #56B4E9 #D55E00 #F0E442；语义靠线型/端点区分，灰度打印可读。非数据的节点底色要在 legend.items 写 `{"fill":"#hex","label":"含义"}`。
 - 期刊尺寸：`canvas.width_mm` 写工单宽度（单栏 85、双栏 180），`canvas.min_font_pt` 写工单最小字号（没写默认 6.5）；SVG/PDF 即为真实物理宽度，build 会自动放大全部文字直到最小字号达标，末行报告画布、最小字号 pt 和放大倍数。**不要自己写 `canvas.layout`/`gap`**：build 会自动在“子图并排 / 上下叠放”和间距之间选一个既满足最小字号又不超过一页高的排法（`NOTE: auto-fit … chose …`）。改了 spec 重新 build 后要重新 render + pixcheck（检查文件对应最终的图）。仍报 “smallest text … below” 或 “figure is … mm tall” 时：缩短长标签、每行多放或少放节点（分区写 `cols`），实在不行照实记进 exceptions，不删工单要求的内容。不要为了字号把子图改成竖排或删内容；出现 “figure is dense” 时才考虑每行少放节点或拆子图。
@@ -70,15 +70,16 @@ description: 把来源材料（原始论文 PDF、figure 工单 workorder JSON�
  "legend":{"title":"Legend"}}
 ```
 - 排版规则：顶层子图并排还是叠放由脚本按宽度和字号自动选；只含分区的 panel 竖排；只含节点的分区 ≤ 4 个横排一行，多了自动成网格；有 `row` 的节点按 grid 放（列 = col、行 = row，空格留白）。`order` 可调兄弟顺序；`gap`/`vgap` 调间距；`cols` 定网格列数。
-- 想让箭头竖直：上下游节点放同一 col。边穿过别的节点时脚本先自动试 L 形折线，仍穿过才 WARN。
+- 没写 col/row 的一行节点（≤ 6 个），脚本会自动把有关系的排成相邻、箭头从左到右，并尽量与上下分区里的对应节点对齐；一串首尾相连的步骤（1→2→…→n，多于一行）自动蛇形排，换行处是一条短竖箭头。所以流程链和简单分区不用写 col/row；只有想固定位置时才写。
+- 想让箭头竖直：上下游节点放同一 col（跨分区的上下游也一样：上下两个分区都用 grid，把一对节点放在相同的 col）。边穿过别的节点时脚本先自动试 L 形折线，仍穿过才 WARN。边标签在全部连线定好后才放，自动避开节点、其他连线和分区标题；长标签自动折成两三行，但仍建议 ≤ 3 个词，细节放图注。
 - 显式坐标仍可用（节点 `cx,cy,w,h`，panel `x,y,w,h`），只在局部微调时用。
 - 其他键：`shape` rect|round|ellipse|circle|diamond、`fill`、`fs`、`bold`、`aliases`（同义名）；`kind` 可选：cell_type cell tissue organ organism sample material reagent condition instrument step process data concept group gene mrna protein complex small_molecule（gene/mrna 自动斜体）；边 `label`、`via:[[x,y]]`、`elbow:"hv"|"vh"`、`both`、`evidence`、`legend`；边类型 activate inhibit bind phospho produce modify transport indirect flow signal step line。中文可直接写。图上不写 id、文件名、行号。
 
 ## result.json 规则
-- 必有：`case_id`、每个 contract 字段、`status`、`status_reasons`、`artifacts`（路径相对 /app/output，带 role：source/preview/export/record）、`entities` 与 `relations`（er.md 内嵌）、`source_map`（内嵌表 + `figure_source_map.md` + `figure_content_map.json`）、`data_mapping`（类别/数值 → 颜色/形状/线型 → 数据表行列；无数据编码写一句说明）、`export_checks`（格式、画布 px、width_mm、dpi、PNG 尺寸、PDF 矢量与否、字体嵌入、中文字体、最小字号 px 与 pt——取 content_map 的 `export_geometry`、色盲/灰度、渲染器）、`change_log`、`versions`（skill lite-1.4、材料文件名与 sha256、渲染器）、`uncertainties`、`material_gaps`、`needs_human_confirmation`。
+- 必有：`case_id`、每个 contract 字段、`status`、`status_reasons`、`artifacts`（路径相对 /app/output，带 role：source/preview/export/record）、`entities` 与 `relations`（er.md 内嵌）、`source_map`（内嵌表 + `figure_source_map.md` + `figure_content_map.json`）、`data_mapping`（类别/数值 → 颜色/形状/线型 → 数据表行列；无数据编码写一句说明）、`export_checks`（格式、画布 px、width_mm、dpi、PNG 尺寸、PDF 矢量与否、字体嵌入、中文字体、最小字号 px 与 pt——取 content_map 的 `export_geometry`、色盲/灰度、渲染器）、`change_log`、`versions`（skill lite-1.5、材料文件名与 sha256、渲染器）、`uncertainties`、`material_gaps`、`needs_human_confirmation`。
 - 有工单时加 `compliance_checks`：工单每一项要求一行 `{"requirement":"<原文>","result":"pass/partial/fail 选一","element_ids":["<SVG 里真实存在的 id>"],"evidence":"<怎么满足>"}`。用了 figtext 时再加一行“与原图标签一致”：列出原图标签中已画/未画的项。
 - 字段映射按含义：要“源文件/路径”的填 `figure.svg` + spec 路径；要“导出件”的填 png/pdf 路径加 export_checks；要“来源/元素/映射”（如 content_map、source_map）的填 content_map 内容并附文件路径；要“检查/合规”的填 compliance_checks；要“异常/不确定/缺口”（如 exceptions）的按 `{"category":"material_missing/undecidable/contradiction/run_failure","detail":…,"handling":…}` 逐条写；要“修改记录”的填 change_log 内嵌表并附文件路径；看不懂的字段填最接近内容并在 `run_notes` 说明。
-- 任何字段不得留空、TODO、“生成中”。**status 只写一个词**：contract 列了可选词用它的；否则 complete / partial / failed。complete = 图、预览、来源映射齐全且无未决矛盾；有缺口或待确认 = partial（原因逐条写进 status_reasons）；没出图 = failed。
+- 任何字段不得留空、TODO、“生成中”。**status 只写一个词**：contract 列了可选词用它的；否则 complete / partial / failed。complete = 工单要求的每一项都画出来了，SVG 与 PNG/PDF 预览、来源映射、修改记录齐全；已发现并在图上/exceptions 里交代清楚的矛盾、推测和待确认项不降级（逐条写进 exceptions 与 status_reasons，不隐瞒）。partial = 工单有一项没画出、要求的格式没导出、渲染失败或关键材料读不到（缺什么逐条写）；没出图 = failed。
 
 ## 异常处理
 | 情况 | 处置 |
