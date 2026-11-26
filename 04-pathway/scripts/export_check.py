@@ -687,11 +687,100 @@ def assemble(a):
         res["run_notes"] = run_notes
     (out / "result.json").write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
     print("assembled result.json: status=%s, %d contract field(s): %s" % (st, len(fl), ", ".join("%s<-%s" % (k, role(k) or "summary") for k, _ in fl)))
+    tr = (res.get("content_map") or {}).get("source_trace") if isinstance(res.get("content_map"), dict) else None
+    tr = tr or next((v.get("source_trace") for v in res.values() if isinstance(v, dict) and isinstance(v.get("source_trace"), dict)), None)
+    if isinstance(tr, dict) and tr.get("pointers"):
+        print("source trace: %d/%d src pointers resolved to verbatim quotes; %d/%d entity names occur in their cited lines%s%s" % (
+            tr.get("resolved", 0), tr["pointers"], tr.get("named_in_cited_lines", 0), tr.get("names_checked", 0),
+            "; cited lines do not name: %s (line numbers off? fix src once if cheap)" % ", ".join(map(str, tr["named_elsewhere"][:6])) if tr.get("named_elsewhere") else "",
+            "; NOT in the source text: %s (check spelling / invented?)" % ", ".join(map(str, tr["not_named_in_source_text"][:6])) if tr.get("not_named_in_source_text") else ""))
     rc = check([])
     return 1 if bad else rc
 
-SKILL_VER = "bio-pathway-figure-lite 1.5"
+SKILL_VER = "bio-pathway-figure-lite 1.6"
 CONSUMED = {"fields", "status", "status_reasons", "run_notes", "edit_request", "summary", "compliance_checks", "exceptions", "change_log", "caption"}
+
+def png_px(p):
+    try:
+        h = open(p, "rb").read(24)
+        return [int.from_bytes(h[16:20], "big"), int.from_bytes(h[20:24], "big")] if h[:4] == b"\x89PNG" else None
+    except Exception:
+        return None
+
+SRC = re.compile(r"([\w.\-/]+\.(?:txt|md|csv|tsv))\s*[:#]\s*L?(\d+)(?:\s*[-\u2013~]\s*L?(\d+))?")
+
+def trace(out, cm):
+    """Resolve every 'file:Lnn' source pointer to the verbatim lines (+ PDF page) and test that the element's name occurs in the source text.
+    Advisory: adds quote/page/named_in_source to the content map, copies the text into OUT_DIR so the line numbers can be re-checked."""
+    work, cache, copied = Path(os.environ.get("WORK_DIR") or "/app/work"), {}, {}
+    case = Path(os.environ.get("CASE_JSON") or "/input/case.json").parent
+    def load(name):
+        if name not in cache:
+            cache[name] = None
+            for d in (work, out, case, case / "data", case / "source", Path(".")):
+                f = d / name if not os.path.isabs(name) else Path(name)
+                try:
+                    if f.is_file() and f.stat().st_size < 3000000:
+                        t = f.read_text(encoding="utf-8", errors="replace")
+                        pg, pages = 1, []
+                        for ln in t.split("\n"):
+                            pg += ln.count("\f")  # pdftotext puts the page break at the start of the next page's first line
+                            pages.append(pg)
+                        cache[name] = (t.replace("\f", "").split("\n"), pages, "\f" in t)
+                        if f.suffix in (".txt", ".md") and f.parent != out and f.parent != case:
+                            dst = "source_text_%s" % f.name if f.name != "src.txt" else "source_text.txt"
+                            try:
+                                shutil.copyfile(str(f), str(out / dst))
+                                copied[name] = dst
+                            except Exception:
+                                pass
+                        break
+                except Exception:
+                    pass
+        return cache[name]
+    stat = {"pointers": 0, "resolved": 0, "names_checked": 0, "named_in_cited_lines": 0, "named_elsewhere": [], "not_named_in_source_text": []}
+    whole = {}
+    for kind in ("entities", "relations", "compartments"):
+        for x in cm.get(kind) or []:
+            m = SRC.search(str(x.get("src") or ""))
+            if not m:
+                continue
+            stat["pointers"] += 1
+            got = load(os.path.basename(m.group(1)) if not os.path.isabs(m.group(1)) else m.group(1))
+            if not got:
+                continue
+            lines, pages, paged = got
+            a = int(m.group(2))
+            b = min(int(m.group(3) or a), a + 7)
+            if a < 1 or a > len(lines):
+                x["quote"] = None
+                x["source_note"] = "line %d is outside the source text (%d lines)" % (a, len(lines))
+                continue
+            q = " ".join(" ".join(lines[a - 1:b]).split())
+            x["quote"] = q[:300] + ("…" if len(q) > 300 else "")
+            if paged:
+                x["page"] = pages[a - 1]
+            stat["resolved"] += 1
+            if kind == "entities" and not str(m.group(1)).endswith((".csv", ".tsv")):
+                names = [str(x.get("label") or "")] + [str(v) for v in (x.get("aliases") or [])]
+                keys = [k for k in sum(([n] + re.split(r"[\s/(),;]+", n) for n in names), []) if len(k) >= 3]
+                low = lambda t: re.sub(r"[\s\-]", "", t.lower())  # noqa: E731
+                if not keys:
+                    continue
+                stat["names_checked"] += 1
+                if any(low(k) in low(q) for k in keys):
+                    x["named_in_source"] = "cited lines"
+                    stat["named_in_cited_lines"] += 1
+                else:
+                    w = whole.setdefault(m.group(1), [low(l) for l in lines])
+                    hit = next((n + 1 for n, l in enumerate(w) if any(low(k) in l for k in keys)), None)
+                    x["named_in_source"] = "L%d (not in the cited lines)" % hit if hit else "not found verbatim"
+                    (stat["named_elsewhere"] if hit else stat["not_named_in_source_text"]).append(x.get("id"))
+    if stat["pointers"]:
+        stat["source_text_files"] = sorted(copied.values()) or None
+        stat["note"] = "quote = verbatim lines the src pointer names; page = PDF page when the text keeps page breaks; names are matched case- and hyphen-insensitively (advisory)"
+        cm["source_trace"] = stat
+    return stat
 
 def blocks(out, notes):
     """Canonical result blocks from whatever files exist in OUT_DIR (every input optional) + the agent's notes.json."""
@@ -701,16 +790,22 @@ def blocks(out, notes):
     main = "figure.svg" if has("figure.svg") else (svgs[0] if svgs else None)
     stem = main[:-4] if main else "figure"
     cm = jf(out / (stem + "_content_map.json"), {}) or {}
+    try:
+        tr = trace(out, cm) if cm else {}
+    except Exception as e:  # never blocks the result
+        tr = {}
+        cm["source_trace"] = {"note": "source pointers could not be resolved (%s)" % str(e)[:80]}
+    ls = sorted(p.name for p in out.iterdir() if p.is_file() and p.name != "result.json")
     pxs = {n: jf(out / n, {}) or {} for n in ls if n.endswith("_pixel_check.json")}
     logs, diff = jl(out / "export_log.jsonl"), jf(out / "edit_diff.json", {}) or {}
     specs = [n for n in ls if n.endswith(".json") and "spec" in n]
-    B = {"artifacts": [{"path": n, "role": "source" if n.endswith(".svg") or n in specs else "export" if n.endswith((".pdf", ".png")) else "record"} for n in ls]}
+    B = {"artifacts": [{"path": n, "role": "source" if n.endswith(".svg") or n in specs else "export" if n.endswith((".pdf", ".png")) else "source_text" if n.startswith("source_text") else "record"} for n in ls]}
     B["editable_source"] = {k: v for k, v in (("svg", svgs or None), ("spec", specs or None),
         ("layers", ["panels", "edges", "nodes", "data", "text", "legend"] if main else None),
         ("how_to_edit", "copy *_resolved_spec.json (fixed coordinates), edit labels/colours and run svgfig.py build; or svgfig.py edit <in.svg> <out.svg> <id> --text/--set" if main else None)) if v is not None}
     ex = []
     for e in logs:
-        ex += [{"file": os.path.basename(str(e.get(f))), "format": f, "dpi": e.get("dpi"), "canvas_px": e.get("canvas_px"), "renderer": e.get(f + "_method"),
+        ex += [{"file": os.path.basename(str(e.get(f))), "format": f, "dpi": e.get("dpi"), "pixels": png_px(str(out / os.path.basename(str(e.get(f))))) if f == "png" else None, "svg_user_units": e.get("canvas_px"), "renderer": e.get(f + "_method"),
                 "pdf_is_vector": e.get("pdf_is_vector") if f == "pdf" else None, "pdf_fonts": e.get("pdf_fonts") if f == "pdf" else None, "note": e.get("note")}
                for f in ("png", "pdf") if e.get(f)]
         ex += [{"file": None, "source_svg": os.path.basename(str(e.get("svg"))), "format": f, "renderer": None, "log": e.get(f + "_log")} for f in ("png", "pdf") if not e.get(f)]
@@ -723,8 +818,9 @@ def blocks(out, notes):
     if has("figure_source_map.md"):
         B["content_map"]["source_map_file"] = "figure_source_map.md"
     cc = [x for x in (notes.get("compliance_checks") or []) if isinstance(x, dict)]
-    cc += [{"requirement": "rendered pixel inspection (%s, advisory)" % n, "result": "pass" if not ((p.get("warnings") or []) + (p.get("fails") or []) or p.get("skipped")) else "partial",
-            "element_ids": [], "evidence": "; ".join(((p.get("warnings") or []) + (p.get("fails") or []))[:4]) or p.get("skipped") or n} for n, p in pxs.items()]
+    cc += [{"requirement": "rendered pixel inspection (%s, advisory)" % n, "result": "partial" if p.get("fails") or p.get("skipped") else "pass",
+            "element_ids": [], "evidence": "; ".join(((p.get("fails") or []) + ["note: " + w for w in (p.get("warnings") or [])])[:4]) or p.get("skipped") or
+            "%s node(s): rendered fill = declared fill, label ink visible, every node colour has a legend swatch; %s" % (len(p.get("nodes") or []), n)} for n, p in pxs.items()]
     B["compliance_checks"] = cc
     exc = [x for x in (notes.get("exceptions") or []) if isinstance(x, dict)]
     told = json.dumps(exc, ensure_ascii=False).lower()
@@ -734,7 +830,8 @@ def blocks(out, notes):
     miss = [f for f in ("png", "pdf") if not any(n.endswith("." + f) for n in ls)]
     if miss and "run_failure" not in told:
         exc.append({"category": "run_failure", "detail": "missing export format(s): %s" % miss, "handling": "see export_log.jsonl; no preview was faked"})
-    left = [w for w in (cm.get("warnings") or []) if w.split(":")[0].lower()[:30] not in told]
+    ids_ = lambda w: re.findall(r"\b(?:edge|node|panel) ([\w.\-]+)", w)  # noqa: E731
+    left = [w for w in (cm.get("warnings") or []) if w.split(":")[0].lower()[:30] not in told and not (ids_(w) and all(i.lower() in told for i in ids_(w)))]
     if left:
         exc.append({"category": "layout_note", "detail": "build notes left after the allowed rebuilds: %s" % "; ".join(left[:5]), "handling": "cosmetic; kept, see %s_content_map.json" % stem})
     B["exceptions"] = exc or [{"category": "none", "detail": "no open issues recorded", "handling": "-"}]
@@ -743,11 +840,19 @@ def blocks(out, notes):
         [{"version": "v2", "request": notes.get("edit_request") or "(not stated)", "outputs": v2, "svg_changes": (diff.get("changes") or [])[:40],
           "kept_ids": diff.get("kept_ids"), "unchanged_ids": diff.get("unchanged_ids")}] if v2 or diff else
         [{"version": "v1", "change": "initial figure from the materials", "note": "no edit applied"}])
-    mats = sorted(str(p) for p in Path("/input").rglob("*") if p.is_file())[:30] if Path("/input").exists() else []
+    idir = Path(os.environ.get("CASE_JSON") or "/input/case.json").parent
+    mats = sorted(str(p) for p in idir.rglob("*") if p.is_file())[:30] if idir.exists() and len(idir.parts) > 1 else []
     B["versions"] = {"skill": SKILL_VER, "python": sys.version.split()[0], "spec_sha256_16": cm.get("spec_sha256_16"),
                      "data_encoding": {k: (cm.get("data_encoding") or {}).get(k) for k in ("file", "sha256_16")} if cm.get("data_encoding") else None,
                      "renderer": next((e.get("png_method") or e.get("pdf_method") for e in reversed(logs) if e.get("png_method") or e.get("pdf_method")), None),
-                     "materials_sha256": {p: sha(p) for p in mats}}
+                     "materials_sha256": {os.path.relpath(p, str(idir)): (sha(p) or "")[:16] for p in mats}}
+    if tr.get("not_named_in_source_text") and "not found verbatim" not in told:
+        exc_note = {"category": "undecidable", "detail": "name not found verbatim in the extracted source text for: %s" % ", ".join(map(str, tr["not_named_in_source_text"][:8])),
+                    "handling": "check these labels against the source (renamed, abbreviated or taken from a figure/table); see content_map.source_trace"}
+        if B["exceptions"] and B["exceptions"][0].get("category") == "none":
+            B["exceptions"] = [exc_note]
+        else:
+            B["exceptions"].append(exc_note)
     auto = "%s. Legend: %s." % (((jf(out / specs[0], {}) or {}).get("canvas") or {}).get("title", "Figure") if specs else "Figure",
                                "; ".join("%s = %s" % (x.get("edge") or x.get("evidence") or x.get("kind") or x.get("mod") or x.get("fill"), x.get("label")) for x in (cm.get("legend") or []) if not x.get("head"))) if cm else None
     B["caption"] = notes.get("caption") or ((out / "figure_caption.md").read_text(encoding="utf-8") if has("figure_caption.md") else auto)

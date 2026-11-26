@@ -35,6 +35,7 @@ KLAB = {"gene": "gene (italic)", "mrna": "mRNA (italic)", "protein": "protein", 
 MODS = {"P": "phosphorylated", "UB": "ubiquitinated", "AC": "acetylated", "ME": "methylated"}
 FONT = "Arial, Helvetica, 'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', sans-serif"
 FSUSED = []
+GS = [1.0, 1.0]  # glyph scale (text scale S) and line-weight scale K of the figure being built
 q = lambda s: escape(str(s), {'"': "&quot;"})  # noqa: E731
 nm = lambda s: re.sub(r"[^a-z0-9α-ω]", "", str(s).lower().replace("p-", ""))  # noqa: E731
 
@@ -106,16 +107,16 @@ def shape(sh, x, y, w, h, base, cx, cy):
     if sh == "diamond":
         return ['<polygon %s points="%s,%s %s,%s %s,%s %s,%s"/>' % (base, cx, y, x + w, cy, cx, y + h, x, cy)]
     if sh == "octagon":
-        c = min(9.0, h / 3.2)
+        c = min(9.0 * GS[0], h / 3.2)
         return ['<polygon %s points="%s"/>' % (base, " ".join("%.1f,%.1f" % p for p in (
             (x + c, y), (x + w - c, y), (x + w, y + c), (x + w, y + h - c), (x + w - c, y + h), (x + c, y + h), (x, y + h - c), (x, y + c))))]
-    out = []
+    out, g = [], GS[0]
     if sh == "stack":
-        out.append('<rect x="%.1f" y="%.1f" width="%s" height="%s" rx="4" fill="#FFFFFF" stroke="#333333" stroke-width="1.2"/>' % (x + 5, y - 5, w, h))
-    out.append('<rect %s x="%s" y="%s" width="%s" height="%s" rx="%s"/>' % (base, x, y, w, h, {"round": round(min(12, h * 0.32), 1), "band": 0, "gene": 0, "mrna": 0}.get(sh, 2)))
+        out.append('<rect x="%.1f" y="%.1f" width="%s" height="%s" rx="%g" fill="#FFFFFF" stroke="#333333" stroke-width="%g"/>' % (x + 5 * g, y - 5 * g, w, h, round(4 * g, 1), round(1.2 * GS[1], 1)))
+    out.append('<rect %s x="%s" y="%s" width="%s" height="%s" rx="%s"/>' % (base, x, y, w, h, {"round": round(min(12 * g, h * 0.32), 1), "band": 0, "gene": 0, "mrna": 0}.get(sh, 2)))
     if sh == "gene":  # promoter: bent arrow above the left end, pointing along the gene
-        out.append('<path d="M%.1f,%.1f v-9 h12" fill="none" stroke="#333333" stroke-width="1.5"/><path d="M%.1f,%.1f l6,3.5 l-6,3.5 z" fill="#333333"/>' % (
-            x + 10, y, x + 21, y - 12.5))
+        out.append('<path d="M%.1f,%.1f v%g h%g" fill="none" stroke="#333333" stroke-width="%g"/><path d="M%.1f,%.1f l%g,%g l%g,%g z" fill="#333333"/>' % (
+            x + 10 * g, y, -9 * g, 12 * g, round(1.5 * GS[1], 1), x + 21 * g, y - 12.5 * g, 6 * g, 3.5 * g, -6 * g, 3.5 * g))
     return out
 
 def colorscale(cs, base, warn):
@@ -473,9 +474,18 @@ def layout(sp, F, where="right", stretch=0, fold=False):
     titled = [p for p in panels if p.get("title")]
     reserve = max([tw(p["title"], 12.5 * F, True) + 26 for p in titled if thin(p) and not p.get("in")] + [24])
     X0, PX = 20 + reserve, 20
-    xl = [X0]
+    xl, need = [X0], {}
     for c in range(ncol):
         xl.append(xl[-1] + colw[c] + gap)
+    for e in E:  # a labelled link between neighbours on one row: the space between the two nodes must hold the label
+        u, v = sorted((e["from"], e["to"]), key=lambda i: slot[i])
+        if rowof[u] == rowof[v] and slot[v] - slot[u] == 1 and e.get("label"):
+            clear = (xl[slot[v]] + xl[slot[v] + 1] - N[v]["w"]) / 2.0 - (xl[slot[u]] + xl[slot[u] + 1] + N[u]["w"]) / 2.0
+            need[slot[u]] = max(need.get(slot[u], 0), min(2 * (tw(str(e["label"]), 12 * F) + 30 * F - clear), 150 * F))  # nodes sit mid-span: half of the extra reaches this gap
+    if any(v > 0 for v in need.values()):
+        xl = [X0]
+        for c in range(ncol):
+            xl.append(xl[-1] + colw[c] + gap + max(0, need.get(c, 0)))
     cv["title_w"] = round(max(xl[-1] + 18 - PX, 300 * F), 1)
     y = y0_top(cv, F)
     gut, info = {}, {}
@@ -520,7 +530,7 @@ def layout(sp, F, where="right", stretch=0, fold=False):
         x1, y1, x2, y2 = a["cx"], a["cy"], b["cx"], b["cy"]
         return any(n is not a and n is not b and any(abs(x1 + (x2 - x1) * f / 24.0 - n["cx"]) < n["w"] / 2.0 + 4 and
                                                      abs(y1 + (y2 - y1) * f / 24.0 - n["cy"]) < n["h"] / 2.0 + 4 for f in range(1, 24)) for n in nodes)
-    seen, side = set(), {}
+    seen, side, bus = set(), {}, {}
     for e in E:
         a, b = N[e["from"]], N[e["to"]]
         (r1, c1), (r2, c2) = info[a["id"]], info[b["id"]]
@@ -530,6 +540,10 @@ def layout(sp, F, where="right", stretch=0, fold=False):
         e.pop("via", None), e.pop("elbow", None), e.pop("ports", None)
         near = r2 == r1 + 1 or (r2 > r1 and c1 == c2) or (r1 == r2 and abs(c1 - c2) == 1) or (r2 == r1 - 1 and c1 == c2)
         if not dup and near and not blocked(a, b):
+            if r2 == r1 + 1 and c1 != c2 and not cv.get("diagonal"):  # next row, other column: right-angle connector (down, across, down)
+                if (r1, a["id"]) not in bus:
+                    bus[(r1, a["id"])] = gut[r1][1] + off(("g", r1, 1), 6)
+                e["via"] = [[round(a["cx"], 1), round(bus[(r1, a["id"])], 1)], [round(b["cx"], 1), round(bus[(r1, a["id"])], 1)]]
             continue
         if dup and near and (r1 == r2 or c1 == c2):  # second relation between the same pair: a parallel offset line
             o = 10
@@ -619,8 +633,8 @@ def layout(sp, F, where="right", stretch=0, fold=False):
     else:
         gs = legend_groups(sp, F)
         avail = max(right - PX, max(g[0] for g in gs))
-        lg.update(x=PX + 4, y=round(bottom + 12, 1), groups=True, avail=round(avail, 1))
-        cv["w"], cv["h"] = round(max(right + 6, PX + avail + 6)), round(bottom + 12 + 22 * F + legend_plan(gs, avail)[1] + 16)
+        lg.update(x=PX + 4, y=round(bottom + 12 + 8 * F, 1), groups=True, avail=round(avail, 1))
+        cv["w"], cv["h"] = round(max(right + 6, PX + avail + 6)), round(bottom + 12 + 30 * F + legend_plan(gs, avail)[1] + 16)
     cv["w"] = max(cv["w"], int(cv["title_w"] + 2 * PX))
     cv["autosize"] = True
     return cv["w"]
@@ -679,6 +693,9 @@ def build(a):
         rpath = os.path.splitext(out)[0] + "_resolved_spec.json"
         json.dump(res, open(rpath, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     S, PXL = float(cv.get("fs_scale", 1)), 20
+    K = max(1.0, S * 0.7)  # line weights and dash lengths follow the text scale, so a figure laid out large does not end up with hairlines in print
+    GS[:] = [max(1.0, S), K]
+    dsc = lambda d: ",".join("%g" % round(float(x) * K, 1) for x in str(d).split(",")) if d and re.match(r"^[\d.,]+$", str(d)) else d  # noqa: E731
     W, H, g = cv.get("w", 1200), cv.get("h", 800), cv.get("grid", {})
     L = {k: [] for k in ("panels", "edges", "nodes", "data", "text", "legend")}
     cm = {"entities": [], "relations": [], "compartments": [], "legend": [], "data_encoding": None, "warnings": warn}
@@ -696,15 +713,16 @@ def build(a):
         s, th = src(p, "panel"), thin(p) if p.get("auto") else p["h"] < 44
         P[p["id"]] = (p["x"], p["y"], p["x"] + p["w"], p["y"] + p["h"])
         cm["compartments"].append({"id": p["id"], "title": p.get("title", ""), "inside": p.get("in", ""), "membrane": th, "src": s})
-        L["panels"].append('<rect id="%s" x="%s" y="%s" width="%s" height="%s" rx="%s" fill="%s" stroke="%s" stroke-width="1.2" data-src="%s"/>' % (
-            p["id"], p["x"], p["y"], p["w"], p["h"], 3 if th else 8, p.get("fill", "#F2D7B6" if th else "#EEF3F8" if p.get("in") else "#F7F7F7"), p.get("stroke", "#BBBBBB"), q(s)))
+        L["panels"].append('<rect id="%s" x="%s" y="%s" width="%s" height="%s" rx="%s" fill="%s" stroke="%s" stroke-width="%g" data-src="%s"/>' % (
+            p["id"], p["x"], p["y"], p["w"], p["h"], 3 if th else round(8 * GS[0], 1), p.get("fill", "#F2D7B6" if th else "#EEF3F8" if p.get("in") else "#F7F7F7"), p.get("stroke", "#BBBBBB"), round(1.2 * K, 1), q(s)))
         if th:  # lipid bilayer: two rows of head groups
-            k = int(p["w"] // 9)
-            L["panels"].append('<g id="%s-bilayer">%s</g>' % (p["id"], "".join('<circle cx="%.1f" cy="%.1f" r="2.8" fill="#C8996A"/>' % (p["x"] + 5 + 9 * j, yy)
-                                                                                for j in range(k) for yy in (p["y"] + 4, p["y"] + p["h"] - 4))))
+            g = GS[0]
+            k = int(p["w"] // (9 * g))
+            L["panels"].append('<g id="%s-bilayer">%s</g>' % (p["id"], "".join('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#C8996A"/>' % (p["x"] + 5 * g + 9 * g * j, yy, 2.8 * g)
+                                                                                for j in range(k) for yy in (p["y"] + 4 * g, p["y"] + p["h"] - 4 * g))))
         elif re.search(r"nucle(us|ar)|核", str(p.get("title", "")).lower()) or p.get("envelope"):  # double nuclear envelope
-            L["panels"].append('<rect id="%s-envelope" x="%s" y="%s" width="%s" height="%s" rx="6" fill="none" stroke="%s" stroke-width="1"/>' % (
-                p["id"], p["x"] + 5, p["y"] + 5, p["w"] - 10, p["h"] - 10, p.get("stroke", "#BBBBBB")))
+            L["panels"].append('<rect id="%s-envelope" x="%s" y="%s" width="%s" height="%s" rx="%g" fill="none" stroke="%s" stroke-width="%g"/>' % (
+                p["id"], p["x"] + 5 * GS[0], p["y"] + 5 * GS[0], p["w"] - 10 * GS[0], p["h"] - 10 * GS[0], round(6 * GS[0], 1), p.get("stroke", "#BBBBBB"), round(K, 1)))
         if p.get("title"):
             tfs = p.get("fs", (12.5 if th else 15 if p.get("in") else 17) * S)
             if th and p.get("title_right"):
@@ -750,8 +768,8 @@ def build(a):
         nodata = nodata or nod
         x, y, w, h = n["cx"] - n["w"] / 2.0, n["cy"] - n["h"] / 2.0, n["w"], n["h"]
         fill = n.get("fill", "#FFFFFF")
-        base = 'id="%s" fill="%s" stroke="%s" stroke-width="%s"%s data-src="%s"' % (n["id"], fill, n.get("stroke", "#333333"), n.get("stroke_width", 1.5),
-                                                                                  ' stroke-dasharray="%s"' % q("6,4" if n["dash"] is True else n["dash"]) if n.get("dash") else "", q(s))
+        base = 'id="%s" fill="%s" stroke="%s" stroke-width="%s"%s data-src="%s"' % (n["id"], fill, n.get("stroke", "#333333"), n.get("stroke_width", round(1.5 * K, 1)),
+                                                                                  ' stroke-dasharray="%s"' % q(dsc("6,4") if n["dash"] is True else n["dash"]) if n.get("dash") else "", q(s))
         L["nodes"] += shape(sh, x, y, w, h, base, n["cx"], n["cy"])
         fs, pad = float(n.get("fs", 14 * S)), (0.72 if sh in ("ellipse", "circle", "diamond") else 1.0)
         lines = wrap(n.get("label", ""), w * pad - 12, fs, n.get("bold"))
@@ -764,7 +782,7 @@ def build(a):
         L["nodes"].append(txt(n["id"] + "-label", n["cx"], n["cy"] - (len(lines) - 1) * fs * 0.6 + fs * 0.35, lines, fs, o, s))
         for j, md in enumerate(n.get("mods") or []):
             bx, by = x + w - 4 * S - j * 24 * S, y + 1
-            L["nodes"].append('<circle id="%s-mod-%s" cx="%.1f" cy="%.1f" r="%.1f" fill="#FFFFFF" stroke="#7B3294" stroke-width="1.4"/>' % (n["id"], re.sub(r"\W", "", md), bx, by, 11 * S))
+            L["nodes"].append('<circle id="%s-mod-%s" cx="%.1f" cy="%.1f" r="%.1f" fill="#FFFFFF" stroke="#7B3294" stroke-width="%g"/>' % (n["id"], re.sub(r"\W", "", md), bx, by, 11 * S, round(1.4 * K, 1)))
             L["nodes"].append(txt("%s-mod-%s-label" % (n["id"], re.sub(r"\W", "", md)), bx, by + 4.3 * S, [md], 12 * S, {"bold": 1}, s, "middle", "#7B3294"))
             mods += [md] if md not in mods else []
         cm["entities"].append({"id": n["id"], "label": n.get("label", ""), "kind": kd, "compartment": n.get("comp", ""), "italic": n["italic"], "glyph": sh,
@@ -773,7 +791,7 @@ def build(a):
     for e in sp.get("edges", []):
         t, ev = e.get("type", "step"), e.get("evidence", "direct")
         dash, hk, col = EDGE.get(t, EDGE["step"])
-        dash, col, s = EVID.get(ev, dash), e.get("color", col), src(e, "edge")
+        dash, col, s = dsc(EVID.get(ev, dash)), e.get("color", col), src(e, "edge")
         used += [("edge", t)] + ([("evidence", ev)] if ev in EVID else [])
         ends = [N.get(e[k]) if isinstance(e[k], str) else None for k in ("from", "to")]
         if any(isinstance(e[k], str) and not ends[i] for i, k in enumerate(("from", "to"))):
@@ -796,7 +814,7 @@ def build(a):
             segs.append((e["id"], x1, y1, x2, y2))
             warn += ["edge %s passes through node %s: add via points or move nodes" % (e.get("id"), k) for k, n in N.items() if all(n is not x for x in ends) and any(
                 abs(x1 + (x2 - x1) * f / 20.0 - n["cx"]) < n["w"] / 2.0 - 3 and abs(y1 + (y2 - y1) * f / 20.0 - n["cy"]) < n["h"] / 2.0 - 3 for f in range(1, 20))]
-        sw = e.get("width", round(2 * min(S, 1.5), 1))
+        sw = e.get("width", round(2 * max(min(S, 1.5), S * 0.85), 1))
         hd = []
         if hk != "none" and len(pts) > 1:
             g1, pts[-1] = head(e["id"] + "-head", hk, col, pts[-2], pts[-1], S, sw)
@@ -903,19 +921,20 @@ def build(a):
             gh = 14 * S
             if it.get("edge") or it.get("evidence"):
                 dash, hk, col = EDGE[it["edge"]] if it.get("edge") else (EVID[it["evidence"]], "none", "#555555")
+                dash = dsc(dash)
                 col = it.get("color", col)
                 g1, en = head(i + "-glyphhead", hk, col, (lg["x"], y + 6 * S), (lg["x"] + 36 * S, y + 6 * S), S * 0.8)
-                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%.1f" y2="%s" stroke="%s" stroke-width="%.1f"%s/>' % (i, lg["x"], y + 6 * S, en[0], y + 6 * S, col, round(2 * min(S, 1.5), 1),
+                L["legend"].append('<line id="%s-glyph" x1="%s" y1="%s" x2="%.1f" y2="%s" stroke="%s" stroke-width="%.1f"%s/>' % (i, lg["x"], y + 6 * S, en[0], y + 6 * S, col, round(2 * max(min(S, 1.5), S * 0.85), 1),
                                    ' stroke-dasharray="%s"' % dash if dash else ""))
                 L["legend"] += [g1] if g1 else []
             elif it.get("kind"):
                 gh = 18 * S if it["kind"] == "gene" else 14 * S
                 yy = y + (6 * S if it["kind"] == "gene" else 0)
                 L["legend"] += [re.sub(r'id="[^"]*" ', "", s0, count=1) if k0 else s0 for k0, s0 in enumerate(shape(KSHAPE.get(it["kind"], "rect"), lg["x"], yy, 34 * S, 14 * S,
-                                'id="%s-glyph" fill="#FFFFFF" stroke="#333333" stroke-width="1.2"' % i, lg["x"] + 17 * S, yy + 7 * S))]
+                                'id="%s-glyph" fill="#FFFFFF" stroke="#333333" stroke-width="%g"' % (i, round(1.2 * K, 1)), lg["x"] + 17 * S, yy + 7 * S))]
                 y += gh - 14 * S + (6 * S if it["kind"] == "gene" else 0)
             elif it.get("mod"):
-                L["legend"].append('<circle id="%s-glyph" cx="%.1f" cy="%.1f" r="%.1f" fill="#FFFFFF" stroke="#7B3294" stroke-width="1.4"/>' % (i, lg["x"] + 17 * S, y + 6 * S, 10 * S))
+                L["legend"].append('<circle id="%s-glyph" cx="%.1f" cy="%.1f" r="%.1f" fill="#FFFFFF" stroke="#7B3294" stroke-width="%g"/>' % (i, lg["x"] + 17 * S, y + 6 * S, 10 * S, round(1.4 * K, 1)))
                 L["legend"].append(txt(i + "-glyphtext", lg["x"] + 17 * S, y + 10 * S, [it["mod"]], fs1, {"bold": 1}, "legend", "middle", "#7B3294"))
                 y += 4 * S
             else:

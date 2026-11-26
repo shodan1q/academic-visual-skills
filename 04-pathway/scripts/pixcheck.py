@@ -116,6 +116,7 @@ def main(a):
         if i.endswith("-glyph") and hexrgb(fill):
             legend[i] = P((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
     labels = {el.get("id"): " ".join("".join(el.itertext()).split()) for el in root.iter() if el.tag.endswith("text")}
+    lfill = {el.get("id"): el.get("fill") for el in root.iter() if el.tag.endswith("text")}
     for i, t, b, fill in boxes(lay.get("layer-nodes", root)):
         dx, dy = (b[2] - b[0]) * .12, (b[3] - b[1]) * .12
         pts = [P(b[0] + dx + (b[2] - b[0] - 2 * dx) * u / 14.0, b[1] + dy + (b[3] - b[1] - 2 * dy) * v / 8.0) for u in range(15) for v in range(9)]
@@ -134,14 +135,19 @@ def main(a):
             F.append("node %s: label %r leaves no visible ink (lost, clipped or same colour as fill)" % (i, r["label"]))
         elif inkp:
             ic = max(inkp, key=lambda c: abs(lum(c) - lum(mode)))
-            cr = (max(lum(ic), lum(mode)) + .05) / (min(lum(ic), lum(mode)) + .05)
+            rl = lambda c: sum(k * ((v / 255.0) / 12.92 if v <= 10 else ((v / 255.0 + 0.055) / 1.055) ** 2.4) for k, v in zip((0.2126, 0.7152, 0.0722), c))  # noqa: E731  WCAG relative luminance
+            cr = (max(rl(ic), rl(mode)) + .05) / (min(rl(ic), rl(mode)) + .05)
+            dc = hexrgb(lfill.get(i + "-label") or "")  # thin anti-aliased glyphs under-sample: the declared text colour is the upper bound
+            if dc:
+                cr = max(cr, (max(rl(dc), rl(mode)) + .05) / (min(rl(dc), rl(mode)) + .05))
             r["label_contrast"] = round(cr, 1)
             Wn += ["node %s: label contrast %.1f:1 is low (< 3)" % (i, cr)] if cr < 3 else []
         if legend and not any(dist(mode, c) <= 30 for c in legend.values()) and not (dist(mode, (255, 255, 255)) <= 12):
             F.append("node %s colour %s has no legend swatch of the same rendered colour" % (i, r["rendered_fill"]))
         nodes.append(r)
     sw = sorted(legend.items(), key=lambda kv: lum(kv[1]))
-    Wn += ["legend swatches %s and %s are hard to tell apart in greyscale" % (a[0], b[0]) for a, b in zip(sw, sw[1:]) if abs(lum(a[1]) - lum(b[1])) < 0.03 and dist(a[1], b[1]) > 30]
+    Wn += ["legend swatches %s and %s are hard to tell apart in greyscale" % (a[0], b[0]) for a, b in zip(sw, sw[1:]) if abs(lum(a[1]) - lum(b[1])) < 0.03 and dist(a[1], b[1]) > 30
+           and all(any(dist(hexrgb(n["rendered_fill"]), c) <= 30 for n in nodes) for c in (a[1], b[1]))]  # only when both colours are actually on the figure
     sty = lambda el: (el.get("stroke"), el.get("stroke-dasharray") or "")  # noqa: E731
     lines = {sty(el) for el in lay.get("layer-legend", root).iter() if el.tag.endswith("line")}
     edges = {sty(el): el.get("id") for el in lay.get("layer-edges", root).iter() if el.tag.endswith("polyline")}

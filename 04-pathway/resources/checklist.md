@@ -26,3 +26,4 @@
 - [ ] 修改在源上完成（从 `figure_resolved_spec.json` 复制出 spec_v2 重建，或 edit），`edit_diff.json` 只含预期改动，旧 id 基本全部保留；新版本已渲染，pixcheck 提示看过。
 - [ ] 修改请求引入了材料没有的内容时，exceptions 有 `user_request_not_in_source`。
 - [ ] result.json（assemble 生成）：每个 contract 字段都有内容、无“生成中”，status 一个词，status_reasons 与 exceptions 一致，notes.json 里没有 `<…>` 模板残留。
+- [ ] assemble 输出的 `source trace` 行：指针全部解析成引句；被点名的节点已把 `src` 行号改准，或在 exceptions 说明。
